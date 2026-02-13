@@ -73,6 +73,9 @@ export interface AuditResult {
   ignored: IgnoredViolation[];
 }
 
+/** Raw palette: CSS var name → hex string (no alpha, all opaque) */
+export type RawPalette = Map<string, string>;
+
 /** Theme mode for dual-mode auditing */
 export type ThemeMode = 'light' | 'dark';
 

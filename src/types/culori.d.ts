@@ -1,15 +1,13 @@
-// TODO: Port manual type declarations from multicoin-frontend/scripts/a11y-audit/culori.d.ts
-//
 // culori v4 does not ship bundled TypeScript declarations.
-// This file provides the minimal subset used by the audit tool:
-//   - parse(color: string): Color | undefined
-//   - formatHex(color: Color): string
+// This file provides the minimal subset used by the audit tool.
 //
 // Reference: https://culorijs.org/api/
 
 declare module 'culori' {
   interface Color {
     mode: string;
+    /** Alpha channel (0-1). undefined = fully opaque. */
+    alpha?: number;
     [channel: string]: number | string | undefined;
   }
 

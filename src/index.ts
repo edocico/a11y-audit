@@ -4,6 +4,7 @@
 export type {
   // Core color types
   ColorMap,
+  RawPalette,
   ResolvedColor,
 
   // Pair & result types
