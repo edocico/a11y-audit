@@ -6,6 +6,7 @@ import { buildThemeColorMaps, type TailwindResolverOptions } from '../plugins/ta
 import { extractAllFileRegions, resolveFileRegions } from '../plugins/jsx/region-resolver.js';
 import { checkAllPairs } from './contrast-checker.js';
 import { generateReport } from './report/markdown.js';
+import { generateJsonReport } from './report/json.js';
 
 const MAX_REPORT_COUNTER = 100;
 
@@ -141,33 +142,9 @@ export function runAudit(options: PipelineOptions): AuditRunResult {
 
   // Phase 4: Generate report
   log(verbose, '[a11y-audit] Generating report...');
-  let report: string;
-  if (format === 'json') {
-    // JSON reporter imported lazily when needed
-    report = JSON.stringify(
-      {
-        timestamp: new Date().toISOString(),
-        summary: {
-          filesScanned: results[0]?.result.filesScanned ?? 0,
-          totalPairs: results.reduce((s, r) => s + r.result.pairsChecked, 0),
-          totalViolations: results.reduce((s, r) => s + r.result.violations.length, 0),
-          totalSkipped: results.reduce((s, r) => s + r.result.skipped.length, 0),
-          totalIgnored: results.reduce((s, r) => s + r.result.ignored.length, 0),
-        },
-        themes: results.map(({ mode, result }) => ({
-          mode,
-          violations: result.violations,
-          passed: result.passed,
-          skipped: result.skipped,
-          ignored: result.ignored,
-        })),
-      },
-      null,
-      2,
-    );
-  } else {
-    report = generateReport(results);
-  }
+  const report = format === 'json'
+    ? generateJsonReport(results)
+    : generateReport(results);
 
   // Write report to disk
   const resolvedReportDir = resolve(cwd, reportDir);
