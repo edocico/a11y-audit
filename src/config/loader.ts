@@ -5,7 +5,6 @@ const explorer = lilconfig('a11y-audit', {
   searchPlaces: [
     'a11y-audit.config.js',
     'a11y-audit.config.mjs',
-    'a11y-audit.config.ts',
     '.a11y-auditrc.json',
     'package.json',
   ],
