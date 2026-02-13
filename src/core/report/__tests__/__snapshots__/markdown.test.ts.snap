@@ -1,0 +1,65 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`generateReport > full report snapshot with mixed violations 1`] = `
+"# A11y Contrast Audit Report
+> Generated: 2026-01-15 12:00:00
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Files scanned | 10 |
+| Color pairs checked | 200 |
+| **Violations (AA)** | **4** |
+| — Text contrast (SC 1.4.3) | 3 |
+| — Non-text contrast (SC 1.4.11) | 1 |
+| — Base state | 3 |
+| — Interactive states (hover/focus-visible) | 1 |
+| Would fail AAA text (informational) | 3 |
+| Ignored (a11y-ignore) | 1 |
+| Skipped (dynamic/unresolvable) | 1 |
+
+## ☀️ Light Mode — Text Contrast (SC 1.4.3)
+
+### \`src/components/Button.tsx\`
+
+| Line | State | Background | Foreground | Size | Ratio | AA | AAA | AA Large | APCA Lc |
+|------|:-----:|-----------|------------|:----:|------:|:---:|:---:|:--------:|--------:|
+| 42 | base | bg-white (#ffffff) | text-gray-400 (#9ca3af) | normal | 2.85:1 | **FAIL** | **FAIL** | **FAIL** | -38.2 |
+| 55 | hover | bg-white (#ffffff) | hover:text-gray-300 (#d1d5db) | normal | 1.46:1 | **FAIL** | **FAIL** | **FAIL** | -18.3 |
+
+## ☀️ Light Mode — Non-Text Contrast (SC 1.4.11)
+
+### \`src/components/Input.tsx\`
+
+| Line | State | Type | Element | Against | Ratio | 3:1 |
+|------|:-----:|:----:|---------|---------|------:|:---:|
+| 20 | base | border | border-input (#e5e5e5) | bg-white (#ffffff) | 1.28:1 | **FAIL** |
+
+## 🌙 Dark Mode — Text Contrast (SC 1.4.3)
+
+### \`src/pages/Home.tsx\`
+
+| Line | State | Background | Foreground | Size | Ratio | AA | AAA | AA Large | APCA Lc |
+|------|:-----:|-----------|------------|:----:|------:|:---:|:---:|:--------:|--------:|
+| 100 | base | bg-white (#ffffff) | text-gray-400 (#9ca3af) | normal | 2.85:1 | **FAIL** | **FAIL** | **FAIL** | -38.2 |
+
+## 🌙 Dark Mode — Non-Text Contrast (SC 1.4.11)
+
+No non-text contrast violations found.
+
+## Ignored Violations (\`a11y-ignore\`)
+
+### \`src/components/Badge.tsx\`
+
+| Line | Background | Foreground | Ratio | Reason |
+|------|-----------|------------|------:|--------|
+| 8 | bg-white (#ffffff) | text-gray-400 (#9ca3af) | 2.85:1 | cross-variant cva |
+
+## Skipped Classes
+
+| File | Line | Class | Reason |
+|------|------|-------|--------|
+| src/components/Card.tsx | 15 | \`bg-$dynamic\` | dynamic value |
+"
+`;
