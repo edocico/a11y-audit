@@ -6,6 +6,7 @@ import {
   determineIsLargeText,
   extractStringLiterals,
   extractBalancedParens,
+  getContextOverrideForLine,
 } from '../categorizer.js';
 import type { ClassBuckets, TaggedClass } from '../categorizer.js';
 
@@ -564,5 +565,82 @@ describe('extractStringLiterals', () => {
     const body = "'bg-red-500\\n  text-white'";
     const result = extractStringLiterals(body);
     expect(result.length).toBeGreaterThan(0);
+  });
+});
+
+// ── getContextOverrideForLine ─────────────────────────────────────────
+
+describe('getContextOverrideForLine', () => {
+  test('returns null when no annotation present', () => {
+    const lines = ['<div className="text-white">hello</div>'];
+    expect(getContextOverrideForLine(lines, 1)).toBeNull();
+  });
+
+  test('parses bg: with Tailwind class on same line', () => {
+    const lines = ['// @a11y-context bg:bg-slate-900'];
+    const result = getContextOverrideForLine(lines, 1);
+    expect(result).toEqual({ bg: 'bg-slate-900' });
+  });
+
+  test('parses bg: with hex literal', () => {
+    const lines = ['// @a11y-context bg:#09090b'];
+    const result = getContextOverrideForLine(lines, 1);
+    expect(result).toEqual({ bg: '#09090b' });
+  });
+
+  test('parses fg: parameter', () => {
+    const lines = ['{/* @a11y-context fg:text-white */}'];
+    const result = getContextOverrideForLine(lines, 1);
+    expect(result).toEqual({ fg: 'text-white' });
+  });
+
+  test('parses bg: + fg: together', () => {
+    const lines = ['{/* @a11y-context bg:#09090b fg:text-white */}'];
+    const result = getContextOverrideForLine(lines, 1);
+    expect(result).toEqual({ bg: '#09090b', fg: 'text-white' });
+  });
+
+  test('parses no-inherit flag', () => {
+    const lines = ['{/* @a11y-context-block bg:bg-background no-inherit */}'];
+    const result = getContextOverrideForLine(lines, 1);
+    expect(result).toEqual({ bg: 'bg-background', noInherit: true });
+  });
+
+  test('detects annotation on previous line', () => {
+    const lines = [
+      '// @a11y-context bg:bg-slate-900',
+      '<span className="text-white">Badge</span>',
+    ];
+    const result = getContextOverrideForLine(lines, 2);
+    expect(result).toEqual({ bg: 'bg-slate-900' });
+  });
+
+  test('returns null for line out of bounds', () => {
+    const lines = ['hello'];
+    expect(getContextOverrideForLine(lines, 0)).toBeNull();
+    expect(getContextOverrideForLine(lines, 5)).toBeNull();
+  });
+
+  test('does not match a11y-ignore (separate directive)', () => {
+    const lines = ['// a11y-ignore: decorative'];
+    expect(getContextOverrideForLine(lines, 1)).toBeNull();
+  });
+
+  test('returns null when annotation has no bg or fg params', () => {
+    const lines = ['// @a11y-context no-inherit'];
+    const result = getContextOverrideForLine(lines, 1);
+    expect(result).toBeNull();
+  });
+
+  test('parses JSX block comment with @a11y-context-block', () => {
+    const lines = ['{/* @a11y-context-block bg:bg-card */}'];
+    const result = getContextOverrideForLine(lines, 1);
+    expect(result).toEqual({ bg: 'bg-card' });
+  });
+
+  test('parameters are order-independent', () => {
+    const lines = ['// @a11y-context fg:text-white bg:#000000 no-inherit'];
+    const result = getContextOverrideForLine(lines, 1);
+    expect(result).toEqual({ bg: '#000000', fg: 'text-white', noInherit: true });
   });
 });

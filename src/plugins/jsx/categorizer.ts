@@ -1,4 +1,4 @@
-import type { InteractiveState } from '../../core/types.js';
+import type { ContextOverride, InteractiveState } from '../../core/types.js';
 
 // ── Non-color text-* utilities ────────────────────────────────────────
 const TEXT_NON_COLOR = new Set([
@@ -602,4 +602,52 @@ export function getIgnoreReasonForLine(lines: string[], line1Based: number): str
   const idx = line1Based - 1;
   if (idx < 0 || idx >= lines.length) return null;
   return getIgnoreReason(lines, idx);
+}
+
+// ── @a11y-context annotation detection ────────────────────────────────
+
+// Matches: // @a11y-context ..., {/* @a11y-context ... */}, // @a11y-context-block ...
+const A11Y_CONTEXT_REGEX =
+  /(?:\/\/|\/\*)\s*@a11y-context(?:-block)?\s+(.*?)(?:\s*\*\/\s*\}?\s*)?$/;
+
+function parseContextParams(paramString: string): ContextOverride | null {
+  const override: ContextOverride = {};
+  const tokens = paramString.trim().split(/\s+/);
+
+  for (const token of tokens) {
+    if (token.startsWith('bg:')) {
+      override.bg = token.slice(3);
+    } else if (token.startsWith('fg:')) {
+      override.fg = token.slice(3);
+    } else if (token === 'no-inherit') {
+      override.noInherit = true;
+    }
+  }
+
+  // Must have at least bg or fg to be valid
+  if (!override.bg && !override.fg) return null;
+
+  return override;
+}
+
+function getContextOverride(lines: string[], lineIndex: number): ContextOverride | null {
+  const currentMatch = A11Y_CONTEXT_REGEX.exec(lines[lineIndex]!);
+  if (currentMatch) return parseContextParams(currentMatch[1]!);
+
+  if (lineIndex > 0) {
+    const prevMatch = A11Y_CONTEXT_REGEX.exec(lines[lineIndex - 1]!.trim());
+    if (prevMatch) return parseContextParams(prevMatch[1]!);
+  }
+
+  return null;
+}
+
+/** @internal Exported for unit testing */
+export function getContextOverrideForLine(
+  lines: string[],
+  line1Based: number,
+): ContextOverride | null {
+  const idx = line1Based - 1;
+  if (idx < 0 || idx >= lines.length) return null;
+  return getContextOverride(lines, idx);
 }
