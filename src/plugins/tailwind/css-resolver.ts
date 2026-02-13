@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { toHex } from '../../core/color-utils.js';
 import type { ColorMap, RawPalette, ResolvedColor } from '../../core/types.js';
+import { extractTailwindPalette } from './palette.js';
 
 const MAX_RESOLVE_DEPTH = 10;
 
@@ -7,6 +9,47 @@ export interface ThemeColorMaps {
   light: ColorMap
   dark: ColorMap
   rootFontSizePx: number
+}
+
+export interface TailwindResolverOptions {
+  /** Paths to CSS files containing :root/.dark variable definitions */
+  cssPaths: string[];
+  /** Path to tailwindcss/theme.css (or auto-detected) */
+  palettePath: string;
+}
+
+/**
+ * Builds fully-resolved color maps for both light and dark themes.
+ *
+ * Resolution chain:
+ *   Tailwind class (bg-primary)
+ *     -> --color-primary (@theme inline)
+ *     -> var(--primary) (:root block)
+ *     -> var(--color-sky-700) (Tailwind palette)
+ *     -> oklch(...) -> hex
+ */
+export function buildThemeColorMaps(options: TailwindResolverOptions): ThemeColorMaps {
+  const twPalette = extractTailwindPalette(options.palettePath);
+
+  const fullCss = options.cssPaths
+    .map(p => readFileSync(p, 'utf-8'))
+    .join('\n');
+
+  const rootVars = parseBlock(fullCss, ':root');
+  const darkVars = parseBlock(fullCss, '.dark');
+  const themeInlineVars = parseThemeInline(fullCss);
+
+  const light = resolveAll(rootVars, themeInlineVars, twPalette);
+  const dark = resolveAll(darkVars, themeInlineVars, twPalette);
+
+  // Dark mode fallback: inherit light values for vars not overridden
+  for (const [key, val] of light) {
+    if (!dark.has(key)) dark.set(key, val);
+  }
+
+  const rootFontSizePx = extractRootFontSize(fullCss);
+
+  return { light, dark, rootFontSizePx };
 }
 
 /**
