@@ -1,5 +1,25 @@
-import type { ClassRegion } from '../../core/types.js';
+import type { ClassRegion, ContextOverride } from '../../core/types.js';
 import { BG_NON_COLOR, extractBalancedParens } from './categorizer.js';
+
+// ── @a11y-context Annotation Helpers ──────────────────────────────────
+
+/** Matches @a11y-context (NOT @a11y-context-block) in a comment */
+const A11Y_CONTEXT_SINGLE_REGEX =
+  /(?:\/\/|\/\*)\s*@a11y-context(?!-block)\s+(.*?)(?:\s*\*\/)?$/;
+
+/**
+ * Parses annotation parameters from the body of an @a11y-context comment.
+ * @internal Exported for unit testing
+ */
+export function parseAnnotationParams(body: string): ContextOverride | null {
+  const override: ContextOverride = {};
+  for (const token of body.trim().split(/\s+/)) {
+    if (token.startsWith('bg:')) override.bg = token.slice(3);
+    else if (token.startsWith('fg:')) override.fg = token.slice(3);
+    else if (token === 'no-inherit') override.noInherit = true;
+  }
+  return override.bg || override.fg ? override : null;
+}
 
 // ── JSX Tag Helpers ───────────────────────────────────────────────────
 
@@ -242,6 +262,10 @@ export function extractClassRegions(
     { component: '_root', bg: defaultBg },
   ];
 
+  // ── Single-element @a11y-context override state ──
+  let pendingOverride: ContextOverride | null = null;
+  let currentTagOverride: ContextOverride | null = null;
+
   function currentContext(): string {
     return contextStack[contextStack.length - 1]!.bg;
   }
@@ -261,23 +285,41 @@ export function extractClassRegions(
   let i = 0;
 
   while (i < len) {
-    // Skip single-line comments
+    // Skip single-line comments (detect @a11y-context)
     if (source[i] === '/' && i + 1 < len && source[i + 1] === '/') {
+      const commentStart = i;
       while (i < len && source[i] !== '\n') i++;
+      const commentText = source.slice(commentStart, i);
+      if (/@a11y-context\s/.test(commentText) && !/@a11y-context-block/.test(commentText)) {
+        const match = A11Y_CONTEXT_SINGLE_REGEX.exec(commentText);
+        if (match) pendingOverride = parseAnnotationParams(match[1]!);
+      }
       continue;
     }
 
-    // Skip block comments
+    // Skip block comments (detect @a11y-context)
     if (source[i] === '/' && i + 1 < len && source[i + 1] === '*') {
+      const commentStart = i;
       i += 2;
       while (i < len - 1 && !(source[i] === '*' && source[i + 1] === '/')) i++;
       i += 2;
+      const commentText = source.slice(commentStart, i);
+      if (/@a11y-context\s/.test(commentText) && !/@a11y-context-block/.test(commentText)) {
+        const match = A11Y_CONTEXT_SINGLE_REGEX.exec(commentText);
+        if (match) pendingOverride = parseAnnotationParams(match[1]!);
+      }
       continue;
     }
 
     // ── JSX Container Tag Tracking ───────────────────────────────
     if (source[i] === '<' && i + 1 < len) {
       const next = source[i + 1]!;
+
+      // Non-closing tag: consume pending single-element override
+      if (next !== '/' && next !== '!') {
+        currentTagOverride = pendingOverride;
+        pendingOverride = null;
+      }
 
       // Closing tag: </ComponentName>
       if (next === '/') {
@@ -323,6 +365,10 @@ export function extractClassRegions(
             startLine: lineAt(i),
             contextBg: currentContext(),
           });
+          if (currentTagOverride) {
+            regions[regions.length - 1]!.contextOverride = currentTagOverride;
+            currentTagOverride = null;
+          }
           const inlineStyles = extractInlineStyleColors(source, classNamePos);
           if (inlineStyles) regions[regions.length - 1]!.inlineStyles = inlineStyles;
           i = end + 1;
@@ -345,6 +391,10 @@ export function extractClassRegions(
               startLine: lineAt(i),
               contextBg: currentContext(),
             });
+            if (currentTagOverride) {
+              regions[regions.length - 1]!.contextOverride = currentTagOverride;
+              currentTagOverride = null;
+            }
             const inlineStyles = extractInlineStyleColors(source, classNamePos);
             if (inlineStyles) regions[regions.length - 1]!.inlineStyles = inlineStyles;
             i = strEnd + 1;
@@ -363,6 +413,10 @@ export function extractClassRegions(
               startLine: lineAt(i),
               contextBg: currentContext(),
             });
+            if (currentTagOverride) {
+              regions[regions.length - 1]!.contextOverride = currentTagOverride;
+              currentTagOverride = null;
+            }
             const inlineStyles = extractInlineStyleColors(source, classNamePos);
             if (inlineStyles) regions[regions.length - 1]!.inlineStyles = inlineStyles;
             i = tEnd + 1;
@@ -381,6 +435,10 @@ export function extractClassRegions(
               startLine: lineAt(i),
               contextBg: currentContext(),
             });
+            if (currentTagOverride) {
+              regions[regions.length - 1]!.contextOverride = currentTagOverride;
+              currentTagOverride = null;
+            }
             const inlineStyles = extractInlineStyleColors(source, classNamePos);
             if (inlineStyles) regions[regions.length - 1]!.inlineStyles = inlineStyles;
             i = block.end + 1;
@@ -409,6 +467,10 @@ export function extractClassRegions(
           startLine: lineAt(i),
           contextBg: currentContext(),
         });
+        if (currentTagOverride) {
+          regions[regions.length - 1]!.contextOverride = currentTagOverride;
+          currentTagOverride = null;
+        }
         i = block.end + 1;
         continue;
       }

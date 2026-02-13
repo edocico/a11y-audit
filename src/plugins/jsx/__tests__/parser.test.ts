@@ -327,3 +327,65 @@ describe('extractInlineStyleColors', () => {
     expect(result).toBeUndefined();
   });
 });
+
+// ── @a11y-context single-element annotations ───────────────────────────
+
+describe('@a11y-context (single-element)', () => {
+  test('annotation on previous line attaches contextOverride to next region', () => {
+    const source = [
+      '// @a11y-context bg:bg-slate-900',
+      '<span className="text-white">Badge</span>',
+    ].join('\n');
+    const regions = extract(source);
+
+    expect(regions).toHaveLength(1);
+    expect(regions[0]!.contextOverride).toEqual({ bg: 'bg-slate-900' });
+  });
+
+  test('JSX block comment annotation attaches override', () => {
+    const source = [
+      '{/* @a11y-context bg:#09090b fg:text-white */}',
+      '<div className="text-sm">overlay</div>',
+    ].join('\n');
+    const regions = extract(source);
+
+    expect(regions).toHaveLength(1);
+    expect(regions[0]!.contextOverride).toEqual({ bg: '#09090b', fg: 'text-white' });
+  });
+
+  test('annotation only applies to the next region, not subsequent ones', () => {
+    const source = [
+      '// @a11y-context bg:bg-slate-900',
+      '<span className="text-white">Badge</span>',
+      '<span className="text-black">Other</span>',
+    ].join('\n');
+    const regions = extract(source);
+
+    expect(regions).toHaveLength(2);
+    expect(regions[0]!.contextOverride).toEqual({ bg: 'bg-slate-900' });
+    expect(regions[1]!.contextOverride).toBeUndefined();
+  });
+
+  test('annotation without className on next line is consumed and lost', () => {
+    const source = [
+      '// @a11y-context bg:bg-slate-900',
+      '<div>no className here</div>',
+      '<span className="text-white">Later</span>',
+    ].join('\n');
+    const regions = extract(source);
+
+    expect(regions).toHaveLength(1);
+    expect(regions[0]!.contextOverride).toBeUndefined();
+  });
+
+  test('regular comment does not attach override', () => {
+    const source = [
+      '// This is a regular comment',
+      '<span className="text-white">Badge</span>',
+    ].join('\n');
+    const regions = extract(source);
+
+    expect(regions).toHaveLength(1);
+    expect(regions[0]!.contextOverride).toBeUndefined();
+  });
+});
