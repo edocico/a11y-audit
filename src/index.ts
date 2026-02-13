@@ -1,29 +1,36 @@
 // a11y-audit — programmatic API entry point
 // This module re-exports the public API for consumers using the library as a dependency.
 
+// ── Core types ────────────────────────────────────────────────────────
 export type {
-  // Core color types
   ColorMap,
   RawPalette,
   ResolvedColor,
-
-  // Pair & result types
   ColorPair,
   ContrastResult,
   SkippedClass,
   IgnoredViolation,
   AuditResult,
-
-  // Enum-like types
   ThemeMode,
   InteractiveState,
   ConformanceLevel,
-
-  // File scanning types
   ClassRegion,
   FileRegions,
 } from './types/public.js';
 
-// TODO: Export core pipeline functions once migrated
-// export { audit } from './core/pipeline.js';
-// export { defineConfig } from './core/config.js';
+// ── Plugin interfaces ─────────────────────────────────────────────────
+export type { ColorResolver, FileParser, ContainerConfig, AuditConfig } from './plugins/interfaces.js';
+
+// ── Config ────────────────────────────────────────────────────────────
+export { auditConfigSchema, type AuditConfigInput, type AuditConfigResolved } from './config/schema.js';
+export { loadConfig } from './config/loader.js';
+
+// ── Pipeline ──────────────────────────────────────────────────────────
+export { runAudit, type AuditRunResult, type PipelineOptions, type ThemedAuditResult } from './core/pipeline.js';
+
+// ── Built-in plugins (for programmatic use) ───────────────────────────
+export { shadcnPreset } from './plugins/tailwind/presets/shadcn.js';
+export { findTailwindPalette } from './plugins/tailwind/palette.js';
+
+// ── Utilities ─────────────────────────────────────────────────────────
+export { toHex } from './core/color-utils.js';
