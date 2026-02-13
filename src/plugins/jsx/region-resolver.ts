@@ -202,12 +202,21 @@ export function resolveFileRegions(
         });
       }
 
-      // Resolve effective background (context fallback + inline override)
-      const contextBg = region.contextBg;
+      // Resolve effective background (context fallback + inline override + annotation)
+      const hasAnnotation = region.contextOverride != null;
+      const contextBg = region.contextOverride?.bg?.startsWith('#')
+        ? region.contextBg // hex override goes through inlineStyles path
+        : (region.contextOverride?.bg || region.contextBg);
+
+      // Build inline styles, merging annotation hex bg if present
+      const inlineStyles = region.contextOverride?.bg?.startsWith('#')
+        ? { ...region.inlineStyles, backgroundColor: region.contextOverride.bg }
+        : region.inlineStyles;
+
       const effectiveBg = buildEffectiveBg(
         categorized.bgClasses,
         contextBg,
-        region.inlineStyles,
+        inlineStyles,
       );
       const hasExplicitBg = categorized.bgClasses.length > 0;
 
@@ -224,6 +233,20 @@ export function resolveFileRegions(
             base: `text-[${hex}]`,
           });
         }
+      }
+
+      // fg override from @a11y-context annotation
+      if (region.contextOverride?.fg) {
+        const fgOverride = region.contextOverride.fg;
+        const isHex = fgOverride.startsWith('#') && fgOverride.length >= 4;
+        textClasses.length = 0;
+        textClasses.push({
+          raw: `(@a11y-context) ${fgOverride}`,
+          isDark: false,
+          isInteractive: false,
+          interactiveState: null,
+          base: isHex ? `text-[${fgOverride}]` : fgOverride,
+        });
       }
 
       const meta: PairMeta = {
@@ -249,6 +272,11 @@ export function resolveFileRegions(
         contextBg,
       );
       allPairs.push(...baseResult.pairs);
+      if (hasAnnotation) {
+        for (const pair of baseResult.pairs) {
+          pair.contextSource = 'annotation';
+        }
+      }
       allSkipped.push(...baseResult.skipped);
 
       // Interactive state pairs (CSS inheritance: state overrides base)
@@ -274,6 +302,11 @@ export function resolveFileRegions(
           contextBg,
         );
         allPairs.push(...stateResult.pairs);
+        if (hasAnnotation) {
+          for (const pair of stateResult.pairs) {
+            pair.contextSource = 'annotation';
+          }
+        }
         allSkipped.push(...stateResult.skipped);
       }
     }

@@ -1,7 +1,8 @@
 import { describe, test, expect } from 'vitest';
-import { buildEffectiveBg, generatePairs } from '../region-resolver.js';
+import { buildEffectiveBg, generatePairs, resolveFileRegions } from '../region-resolver.js';
+import type { PreExtracted } from '../region-resolver.js';
 import type { TaggedClass, ForegroundGroup, PairMeta } from '../categorizer.js';
-import type { ColorMap } from '../../../core/types.js';
+import type { ColorMap, ClassRegion } from '../../../core/types.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -324,5 +325,68 @@ describe('generatePairs', () => {
     expect(result.pairs).toHaveLength(1);
     expect(result.pairs[0]!.bgHex).toBe('#ffffff');
     expect(result.pairs[0]!.textHex).toBe('#ffffff');
+  });
+});
+
+// ── contextOverride in resolveFileRegions ──────────────────────────────
+
+describe('contextOverride in resolveFileRegions', () => {
+  const colorMap: ColorMap = new Map([
+    ['--color-white', { hex: '#ffffff' }],
+    ['--color-black', { hex: '#000000' }],
+    ['--color-slate-900', { hex: '#0f172a' }],
+    ['--color-background', { hex: '#ffffff' }],
+  ]);
+
+  function makePreExtracted(regions: ClassRegion[]): PreExtracted {
+    return {
+      files: [{
+        relPath: 'test.tsx',
+        lines: ['<span className="text-white">Badge</span>'],
+        regions,
+      }],
+      readErrors: [],
+      filesScanned: 1,
+    };
+  }
+
+  test('bg override replaces contextBg in pair generation', () => {
+    const pre = makePreExtracted([{
+      content: 'text-white',
+      startLine: 1,
+      contextBg: 'bg-background',
+      contextOverride: { bg: 'bg-slate-900' },
+    }]);
+    const result = resolveFileRegions(pre, colorMap);
+
+    expect(result.pairs).toHaveLength(1);
+    expect(result.pairs[0]!.bgHex).toBe('#0f172a');
+    expect(result.pairs[0]!.contextSource).toBe('annotation');
+  });
+
+  test('fg override replaces resolved text color', () => {
+    const pre = makePreExtracted([{
+      content: 'text-white',
+      startLine: 1,
+      contextBg: 'bg-background',
+      contextOverride: { fg: '#000000' },
+    }]);
+    const result = resolveFileRegions(pre, colorMap);
+
+    expect(result.pairs).toHaveLength(1);
+    expect(result.pairs[0]!.textHex).toBe('#000000');
+    expect(result.pairs[0]!.contextSource).toBe('annotation');
+  });
+
+  test('without contextOverride, contextSource is not set', () => {
+    const pre = makePreExtracted([{
+      content: 'text-white',
+      startLine: 1,
+      contextBg: 'bg-background',
+    }]);
+    const result = resolveFileRegions(pre, colorMap);
+
+    expect(result.pairs).toHaveLength(1);
+    expect(result.pairs[0]!.contextSource).toBeUndefined();
   });
 });

@@ -35,6 +35,8 @@ export interface ColorPair {
   /** true when suppressed via // a11y-ignore */
   ignored?: boolean;
   ignoreReason?: string;
+  /** 'inferred' = bg determined by parser stack, 'annotation' = overridden via @a11y-context */
+  contextSource?: 'inferred' | 'annotation';
 }
 
 /** Result of a WCAG contrast check */
@@ -48,8 +50,6 @@ export interface ContrastResult extends ColorPair {
   passAAALarge: boolean;
   /** APCA Lightness Contrast value (Lc). null if APCA calculation disabled */
   apcaLc?: number | null;
-  /** 'inferred' = bg determined by parser stack, 'annotation' = overridden via @a11y-context */
-  contextSource?: 'inferred' | 'annotation';
 }
 
 /** A class that couldn't be resolved */
