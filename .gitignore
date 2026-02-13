@@ -1,0 +1,6 @@
+node_modules/
+dist/
+coverage/
+a11y-reports/
+*.tsbuildinfo
+.DS_Store
