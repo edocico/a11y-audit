@@ -8,7 +8,7 @@ A framework-agnostic static contrast audit library for WCAG 2.1 AA/AAA and APCA.
 
 ### Reference documents
 
-- `docs/plans/2026-02-13-library-extraction.md` — The implementation plan (6 phases, 23 tasks). This is the roadmap.
+- `docs/plans/2026-02-13-library-extraction.md` — The implementation plan (6 phases, 23 tasks). Completed. Useful as reference for design decisions.
 - `oldDoc/A11Y_AUDIT_TECHNICAL_ARCHITECTURE.md` — Architecture of the **original embedded script** (in Italian). Use as reference when porting source code from `../multicoin-frontend/scripts/a11y-audit/`. This does NOT describe the current package's architecture.
 
 ## Commands
@@ -47,10 +47,6 @@ npm run typecheck      # tsc --noEmit (strict mode)
 - `src/plugins/jsx/parser.ts` — JSX state machine: `extractClassRegions(source, containerMap, defaultBg)`, `isSelfClosingTag()`, `findExplicitBgInTag()`, `extractInlineStyleColors()`. The container map is injected (not imported globally).
 - `src/plugins/jsx/region-resolver.ts` — Bg/fg pairing logic: `buildEffectiveBg()`, `generatePairs()`, `resolveFileRegions()`, `extractAllFileRegions(srcPatterns, cwd, containerMap, defaultBg)`. Cross-plugin dependency: imports `resolveClassToHex` from `tailwind/css-resolver.ts`.
 
-### Original tool pipeline (context for porting)
-
-The source script follows: Bootstrap → Extract (file I/O + state-machine parsing) → Resolve (per-theme light/dark) → Check (contrast math) → Report. Key pattern: **extract-once / resolve-twice** — file parsing happens once, then color resolution runs per theme mode.
-
 ### Key design decisions
 
 - **Three color libraries**: `culori` for CSS color parsing (better oklch/display-p3 support), `colord` + a11y plugin for WCAG contrast ratios, `apca-w3` for APCA Lightness Contrast (Lc). `culori` and `apca-w3` lack bundled TypeScript declarations → custom `.d.ts` files in `src/types/`.
@@ -71,9 +67,14 @@ The project uses a strict tsconfig: `noUncheckedIndexedAccess`, `noUnusedLocals`
 
 - `noUncheckedIndexedAccess` means regex capture groups (`match[1]`) and string indexing (`hex[1]`) need `!` non-null assertions when certain the match exists.
 
-## Porting Workflow
+## CLI Usage
 
-When porting a module from the original script: read the source in `../multicoin-frontend/scripts/a11y-audit/`, port its tests first (adapt paths/imports), then port the implementation to make them pass. Hardcoded paths must become configurable via plugin interfaces or config. The plan's task list is the order of operations — each task specifies source file, target location, and acceptance criteria.
+```bash
+# Smoke test against multicoin-frontend (745 violations expected)
+cd ../multicoin-frontend && node ../a11y-audit/dist/bin/cli.js \
+  --src 'src/**/*.tsx' --css src/main.theme.css src/main.css \
+  --preset shadcn --report-dir /tmp/a11y-test-report --verbose
+```
 
 ## Gotchas
 
@@ -81,3 +82,4 @@ When porting a module from the original script: read the source in `../multicoin
 - **vitest in worktrees**: If using worktrees, run vitest from the worktree root, not the main project root.
 - **file-scanner.ts split**: The original 1258-LOC `file-scanner.ts` is split into 3 modules: `categorizer.ts` (pure classification), `parser.ts` (state machine), `region-resolver.ts` (pairing). `extractBalancedParens` lives in categorizer and is imported by parser.
 - **Plan vs actual test paths**: The plan references `tests/core/...` paths, but the actual convention is co-located `src/<module>/__tests__/`. Always follow the co-located pattern.
+- **lilconfig + .ts configs**: `lilconfig` has no built-in `.ts` loader. Adding `a11y-audit.config.ts` to `searchPlaces` crashes at runtime. Use `.js`/`.mjs`/`.json` only, or add `jiti` as a custom loader.
