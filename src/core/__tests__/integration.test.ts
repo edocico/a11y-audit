@@ -52,6 +52,16 @@ const FIXTURE_FILES = {
     '<span className="bg-green-500 text-white text-sm">Active</span>',
     '<span className="bg-background text-gray-400">Muted text</span>',
   ].join('\n'),
+
+  'components/Overlay.tsx': [
+    '// @a11y-context bg:#09090b',
+    '<span className="text-white absolute top-0">Badge</span>',
+    '{/* @a11y-context-block bg:bg-background */}',
+    '<div>',
+    '  <p className="text-foreground">Dialog body</p>',
+    '</div>',
+    '<p className="text-black">Normal paragraph</p>',
+  ].join('\n'),
 };
 
 // ── Helper: build PreExtracted from fixture strings ───────────────────
@@ -84,7 +94,7 @@ function runPipeline(themeMode: ThemeMode = 'light'): AuditResult {
 describe('Integration: full pipeline (extract → resolve → check)', () => {
   test('produces correct file count', () => {
     const result = runPipeline();
-    expect(result.filesScanned).toBe(3);
+    expect(result.filesScanned).toBe(4);
   });
 
   test('finds pairs from all fixture files', () => {
@@ -166,6 +176,30 @@ describe('Integration: full pipeline (extract → resolve → check)', () => {
     const withApca = textResults.filter((r) => r.apcaLc != null);
     expect(withApca.length).toBeGreaterThan(0);
   });
+
+  test('@a11y-context overrides bg for floating badge', () => {
+    const result = runPipeline();
+    const allResults = [...result.violations, ...result.passed, ...result.ignored];
+    // Badge with @a11y-context bg:#09090b should be checked against dark bg
+    const badge = allResults.find(
+      (v) => v.file === 'components/Overlay.tsx'
+        && v.textClass === 'text-white'
+        && v.contextSource === 'annotation',
+    );
+    expect(badge).toBeDefined();
+    expect(badge!.bgHex).not.toBe('#ffffff'); // NOT the default white background
+  });
+
+  test('@a11y-context-block applies to children, not siblings', () => {
+    const result = runPipeline();
+    const allResults = [...result.violations, ...result.passed, ...result.ignored];
+    // Normal paragraph outside block annotation should use default bg
+    const normalP = allResults.find(
+      (v) => v.file === 'components/Overlay.tsx' && v.textClass === 'text-black',
+    );
+    expect(normalP).toBeDefined();
+    expect(normalP!.contextSource).toBeUndefined();
+  });
 });
 
 describe('Integration: report generation', () => {
@@ -177,7 +211,7 @@ describe('Integration: report generation', () => {
     const report = generateReport([{ mode: 'light', result }]);
 
     expect(report).toContain('# A11y Contrast Audit Report');
-    expect(report).toContain('| Files scanned | 3 |');
+    expect(report).toContain('| Files scanned | 4 |');
     expect(report).toContain('Light');
 
     vi.useRealTimers();

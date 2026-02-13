@@ -8,8 +8,8 @@ exports[`Integration: report generation > report snapshot is stable for known fi
 
 | Metric | Value |
 |--------|-------|
-| Files scanned | 3 |
-| Color pairs checked | 9 |
+| Files scanned | 4 |
+| Color pairs checked | 12 |
 | **Violations (AA)** | **3** |
 | — Text contrast (SC 1.4.3) | 2 |
 | — Non-text contrast (SC 1.4.11) | 1 |
