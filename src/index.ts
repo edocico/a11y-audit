@@ -16,6 +16,7 @@ export type {
   ConformanceLevel,
   ClassRegion,
   FileRegions,
+  ContextOverride,
 } from './types/public.js';
 
 // ── Plugin interfaces ─────────────────────────────────────────────────

@@ -48,6 +48,8 @@ export interface ContrastResult extends ColorPair {
   passAAALarge: boolean;
   /** APCA Lightness Contrast value (Lc). null if APCA calculation disabled */
   apcaLc?: number | null;
+  /** 'inferred' = bg determined by parser stack, 'annotation' = overridden via @a11y-context */
+  contextSource?: 'inferred' | 'annotation';
 }
 
 /** A class that couldn't be resolved */
@@ -85,6 +87,16 @@ export type InteractiveState = 'hover' | 'focus-visible' | 'aria-disabled';
 /** WCAG conformance level for violation threshold */
 export type ConformanceLevel = 'AA' | 'AAA';
 
+/** Context override from @a11y-context or @a11y-context-block annotation */
+export interface ContextOverride {
+  /** Tailwind class (e.g. 'bg-slate-900') or hex literal (e.g. '#09090b') */
+  bg?: string;
+  /** Tailwind class (e.g. 'text-white') or hex literal (e.g. '#ffffff') */
+  fg?: string;
+  /** When true, children of this block do not inherit the override */
+  noInherit?: boolean;
+}
+
 /** A className region extracted from a source file */
 export interface ClassRegion {
   content: string;
@@ -96,6 +108,8 @@ export interface ClassRegion {
     color?: string;
     backgroundColor?: string;
   };
+  /** Context override from an @a11y-context annotation on the same/preceding line */
+  contextOverride?: ContextOverride;
 }
 
 /** Pre-extracted file data, theme-agnostic. Used for extract-once/resolve-twice pattern. */

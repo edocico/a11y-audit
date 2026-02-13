@@ -22,4 +22,7 @@ export type {
   // File scanning types
   ClassRegion,
   FileRegions,
+
+  // Annotation types
+  ContextOverride,
 } from '../core/types.js';
