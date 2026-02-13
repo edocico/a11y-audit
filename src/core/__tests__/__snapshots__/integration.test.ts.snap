@@ -1,0 +1,52 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Integration: report generation > report snapshot is stable for known fixture input 1`] = `
+"# A11y Contrast Audit Report
+> Generated: 2026-01-15 10:00:00
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Files scanned | 3 |
+| Color pairs checked | 9 |
+| **Violations (AA)** | **3** |
+| — Text contrast (SC 1.4.3) | 2 |
+| — Non-text contrast (SC 1.4.11) | 1 |
+| — Base state | 3 |
+| — Interactive states (hover/focus-visible) | 0 |
+| Would fail AAA text (informational) | 5 |
+| Ignored (a11y-ignore) | 1 |
+| Skipped (dynamic/unresolvable) | 0 |
+
+## ☀️ Light Mode — Text Contrast (SC 1.4.3)
+
+### \`components/Button.tsx\`
+
+| Line | State | Background | Foreground | Size | Ratio | AA | AAA | AA Large | APCA Lc |
+|------|:-----:|-----------|------------|:----:|------:|:---:|:---:|:--------:|--------:|
+| 4 | base | bg-red-500 (#ef4444) | text-white (#ffffff) | normal | 3.76:1 | **FAIL** | **FAIL** | PASS | -69.32 |
+
+### \`components/Badge.tsx\`
+
+| Line | State | Background | Foreground | Size | Ratio | AA | AAA | AA Large | APCA Lc |
+|------|:-----:|-----------|------------|:----:|------:|:---:|:---:|:--------:|--------:|
+| 3 | base | bg-background (#ffffff) | text-gray-400 (#9ca3af) | normal | 2.53:1 | **FAIL** | **FAIL** | **FAIL** | 49.77 |
+
+## ☀️ Light Mode — Non-Text Contrast (SC 1.4.11)
+
+### \`components/Card.tsx\`
+
+| Line | State | Type | Element | Against | Ratio | 3:1 |
+|------|:-----:|:----:|---------|---------|------:|:---:|
+| 1 | base | border | border-input (#e5e5e5) | bg-white (#ffffff) | 1.25:1 | **FAIL** |
+
+## Ignored Violations (\`a11y-ignore\`)
+
+### \`components/Badge.tsx\`
+
+| Line | Background | Foreground | Ratio | Reason |
+|------|-----------|------------|------:|--------|
+| 2 | bg-green-500 (#22c55e) | text-white (#ffffff) | 2.27:1 | decorative element |
+"
+`;
