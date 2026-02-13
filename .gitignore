@@ -4,3 +4,4 @@ coverage/
 a11y-reports/
 *.tsbuildinfo
 .DS_Store
+.worktrees/
