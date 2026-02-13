@@ -14,6 +14,7 @@ interface ThemedAuditResult {
 export function generateReport(results: ThemedAuditResult[]): string {
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
   const lines: string[] = [];
+  let hasAnnotatedPairs = false;
 
   lines.push('# A11y Contrast Audit Report');
   lines.push(`> Generated: ${now}`);
@@ -84,7 +85,9 @@ export function generateReport(results: ThemedAuditResult[]): string {
 
         for (const v of violations) {
           const stateLabel = v.interactiveState ?? 'base';
-          const bgLabel = `${v.bgClass} (${v.bgHex})`;
+          const annotationMark = v.contextSource === 'annotation' ? '†' : '';
+          if (annotationMark) hasAnnotatedPairs = true;
+          const bgLabel = `${v.bgClass}${annotationMark} (${v.bgHex})`;
           const fgLabel = `${v.textClass} (${v.textHex})`;
           const sizeLabel = v.isLargeText ? 'LARGE' : 'normal';
           const aaIcon = v.passAA ? 'PASS' : '**FAIL**';
@@ -120,8 +123,10 @@ export function generateReport(results: ThemedAuditResult[]): string {
         for (const v of violations) {
           const stateLabel = v.interactiveState ?? 'base';
           const typeLabel = v.pairType ?? 'border';
+          const annotationMark = v.contextSource === 'annotation' ? '†' : '';
+          if (annotationMark) hasAnnotatedPairs = true;
           const elementLabel = `${v.textClass} (${v.textHex})`;
-          const againstLabel = `${v.bgClass} (${v.bgHex})`;
+          const againstLabel = `${v.bgClass}${annotationMark} (${v.bgHex})`;
           const passIcon = v.passAALarge ? 'PASS' : '**FAIL**';
 
           lines.push(
@@ -149,8 +154,10 @@ export function generateReport(results: ThemedAuditResult[]): string {
       lines.push('|------|-----------|------------|------:|--------|');
 
       for (const v of items) {
+        const annotationMark = v.contextSource === 'annotation' ? '†' : '';
+        if (annotationMark) hasAnnotatedPairs = true;
         lines.push(
-          `| ${v.line} | ${v.bgClass} (${v.bgHex}) | ${v.textClass} (${v.textHex}) | ${v.ratio}:1 | ${v.ignoreReason} |`
+          `| ${v.line} | ${v.bgClass}${annotationMark} (${v.bgHex}) | ${v.textClass} (${v.textHex}) | ${v.ratio}:1 | ${v.ignoreReason} |`
         );
       }
 
@@ -182,6 +189,12 @@ export function generateReport(results: ThemedAuditResult[]): string {
       lines.push(`| ... | ... | ... | ${allSkipped.length - 50} more skipped |`);
     }
 
+    lines.push('');
+  }
+
+  // Footnote for annotation-overridden pairs
+  if (hasAnnotatedPairs) {
+    lines.push('† Context overridden via `@a11y-context` annotation');
     lines.push('');
   }
 

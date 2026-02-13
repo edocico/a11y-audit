@@ -282,6 +282,77 @@ describe('generateReport', () => {
     expect(report).toContain('text-[color:var(--c|fallback)]');
   });
 
+  // ── Annotated pairs footnote ──────────────────────────────────
+
+  test('annotated violation shows dagger on bgClass and footnote at end', () => {
+    const violation = makeViolation({
+      bgClass: 'bg-card',
+      bgHex: '#1e293b',
+      contextSource: 'annotation',
+    });
+
+    const input: ThemedAuditResult[] = [
+      { mode: 'light', result: makeResult({ violations: [violation] }) },
+      { mode: 'dark', result: makeResult() },
+    ];
+    const report = generateReport(input);
+
+    // bgClass should have dagger marker in the table row
+    expect(report).toContain('bg-card†');
+    // Footnote line at the end
+    expect(report).toContain('† Context overridden via `@a11y-context` annotation');
+  });
+
+  test('non-annotated violations do not show dagger or footnote', () => {
+    const violation = makeViolation(); // no contextSource
+    const input: ThemedAuditResult[] = [
+      { mode: 'light', result: makeResult({ violations: [violation] }) },
+      { mode: 'dark', result: makeResult() },
+    ];
+    const report = generateReport(input);
+
+    expect(report).not.toContain('†');
+    expect(report).not.toContain('@a11y-context');
+  });
+
+  test('annotated non-text violation shows dagger on againstLabel', () => {
+    const borderViolation = makeViolation({
+      textClass: 'border-input',
+      textHex: '#e5e5e5',
+      bgClass: 'bg-popover',
+      bgHex: '#1e293b',
+      pairType: 'border',
+      ratio: 1.28,
+      contextSource: 'annotation',
+    });
+
+    const input: ThemedAuditResult[] = [
+      { mode: 'light', result: makeResult({ violations: [borderViolation] }) },
+      { mode: 'dark', result: makeResult() },
+    ];
+    const report = generateReport(input);
+
+    expect(report).toContain('bg-popover†');
+    expect(report).toContain('† Context overridden via `@a11y-context` annotation');
+  });
+
+  test('annotated ignored violation shows dagger', () => {
+    const ignored = makeIgnored({
+      bgClass: 'bg-sidebar',
+      bgHex: '#1e293b',
+      contextSource: 'annotation',
+    });
+
+    const input: ThemedAuditResult[] = [
+      { mode: 'light', result: makeResult({ ignored: [ignored] }) },
+      { mode: 'dark', result: makeResult() },
+    ];
+    const report = generateReport(input);
+
+    expect(report).toContain('bg-sidebar†');
+    expect(report).toContain('† Context overridden via `@a11y-context` annotation');
+  });
+
   // ── Snapshot test ───────────────────────────────────────────────
 
   test('full report snapshot with mixed violations', () => {
