@@ -9,6 +9,7 @@ A framework-agnostic static contrast audit library for WCAG 2.1 AA/AAA and APCA.
 ### Reference documents
 
 - `docs/plans/2026-02-13-library-extraction.md` — The implementation plan (6 phases, 23 tasks). Completed. Useful as reference for design decisions.
+- `docs/LIBRARY_ARCHITECTURE.md` — Comprehensive architecture doc (in Italian) covering the current package structure, algorithms, types, and config system. **This is the canonical technical reference.**
 - `oldDoc/A11Y_AUDIT_TECHNICAL_ARCHITECTURE.md` — Architecture of the **original embedded script** (in Italian). Use as reference when porting source code from `../multicoin-frontend/scripts/a11y-audit/`. This does NOT describe the current package's architecture.
 
 ## Commands
@@ -25,7 +26,7 @@ npm run typecheck      # tsc --noEmit (strict mode)
 
 ## Architecture
 
-**Ported from multicoin-frontend.** All 6 phases complete. 353 tests passing across 16 test files. Pipeline connected end-to-end.
+**Ported from multicoin-frontend.** All 6 phases complete. 384 tests passing across 16 test files. Pipeline connected end-to-end.
 
 **Target architecture (Layered Onion):** pure math core → plugin interfaces (`ColorResolver`, `FileParser`, `ContainerConfig`) → config (`zod` + `lilconfig`) → CLI (`commander`). Tailwind + JSX are the first plugin implementations.
 
@@ -43,14 +44,15 @@ npm run typecheck      # tsc --noEmit (strict mode)
 - `src/plugins/tailwind/css-resolver.ts` — CSS variable resolution: `buildThemeColorMaps()`, `resolveClassToHex()`, balanced-brace parsing, alpha compositing helpers.
 - `src/plugins/tailwind/palette.ts` — `extractTailwindPalette()` + `findTailwindPalette()` for Tailwind v4 color palette extraction.
 - `src/plugins/tailwind/presets/shadcn.ts` — shadcn/ui container preset (21 component→bg mappings). Implements `ContainerConfig`.
-- `src/plugins/jsx/categorizer.ts` — Pure classification functions: `stripVariants()`, `routeClassToTarget()`, `categorizeClasses()`, `determineIsLargeText()`, `extractBalancedParens()`, `extractStringLiterals()`, `getIgnoreReasonForLine()`. Exports `TaggedClass`, `ClassBuckets`, `ForegroundGroup`, `PairMeta` interfaces.
-- `src/plugins/jsx/parser.ts` — JSX state machine: `extractClassRegions(source, containerMap, defaultBg)`, `isSelfClosingTag()`, `findExplicitBgInTag()`, `extractInlineStyleColors()`. The container map is injected (not imported globally).
+- `src/plugins/jsx/categorizer.ts` — Pure classification functions: `stripVariants()`, `routeClassToTarget()`, `categorizeClasses()`, `determineIsLargeText()`, `extractBalancedParens()`, `extractStringLiterals()`, `getIgnoreReasonForLine()`, `getContextOverrideForLine()`. Exports `TaggedClass`, `ClassBuckets`, `ForegroundGroup`, `PairMeta` interfaces.
+- `src/plugins/jsx/parser.ts` — JSX state machine: `extractClassRegions(source, containerMap, defaultBg)`, `isSelfClosingTag()`, `findExplicitBgInTag()`, `extractInlineStyleColors()`. Handles `@a11y-context` (single-element) and `@a11y-context-block` (block scope) annotations via context stack. The container map is injected (not imported globally).
 - `src/plugins/jsx/region-resolver.ts` — Bg/fg pairing logic: `buildEffectiveBg()`, `generatePairs()`, `resolveFileRegions()`, `extractAllFileRegions(srcPatterns, cwd, containerMap, defaultBg)`. Cross-plugin dependency: imports `resolveClassToHex` from `tailwind/css-resolver.ts`.
 
 ### Key design decisions
 
 - **Three color libraries**: `culori` for CSS color parsing (better oklch/display-p3 support), `colord` + a11y plugin for WCAG contrast ratios, `apca-w3` for APCA Lightness Contrast (Lc). `culori` and `apca-w3` lack bundled TypeScript declarations → custom `.d.ts` files in `src/types/`.
 - **Alpha compositing**: Semi-transparent colors are composited against the page background before contrast calculation. Light mode uses `#ffffff`, dark mode uses `#09090b` (zinc-950).
+- **`@a11y-context` annotations**: Comment-based overrides (`// @a11y-context bg:#hex` for single element, `{/* @a11y-context-block bg:class */}` for block scope) let users correct false positives from absolute positioning, React Portals, and currentColor. Parsed in `categorizer.ts`, consumed by `parser.ts` (context stack) and `region-resolver.ts` (bg/fg override). `ContextOverride` type in `core/types.ts`; `contextSource` field on `ColorPair` tracks annotation provenance.
 - **Dual output**: tsup builds both CJS and ESM with declarations. The package uses `verbatimModuleSyntax` — always use `import type` for type-only imports.
 
 ## Testing Conventions
@@ -75,6 +77,11 @@ cd ../multicoin-frontend && node ../a11y-audit/dist/bin/cli.js \
   --src 'src/**/*.tsx' --css src/main.theme.css src/main.css \
   --preset shadcn --report-dir /tmp/a11y-test-report --verbose
 ```
+
+## Mandatory Workflow Rules
+
+- **MUST: Run tests in small batches, NEVER all at once.** Use `npx vitest run src/<module>/__tests__/<file>.test.ts` to run individual test files, or target a specific directory like `npx vitest run src/plugins/jsx/__tests__/`. Running the full suite (`npm test`) overloads RAM. Batch by module or by test file.
+- **MUST: Update technical documentation after every work session.** At the end of any implementation, always update `docs/LIBRARY_ARCHITECTURE.md` (and `CLAUDE.md` if architecture/module layout changed) to reflect the current state: test counts, new types, new functions, new sections. The documentation must always be in sync with the code.
 
 ## Gotchas
 

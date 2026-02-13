@@ -1,6 +1,6 @@
 # Architettura Tecnica: a11y-audit Library (v1.0)
 
-> **Ultimo aggiornamento**: 2026-02-13 | **Versione**: 1.0.0 (standalone npm package) | **353 test across 16 files**
+> **Ultimo aggiornamento**: 2026-02-13 | **Versione**: 1.0.0 (standalone npm package) | **384 test across 16 files**
 
 ---
 
@@ -152,8 +152,8 @@ a11y-audit/
     │   │       ├── css-resolver.property.test.ts
     │   │       └── palette.io.test.ts
     │   └── jsx/
-    │       ├── categorizer.ts    # stripVariants(), routeClassToTarget(), categorizeClasses()
-    │       ├── parser.ts         # extractClassRegions() state machine
+    │       ├── categorizer.ts    # stripVariants(), routeClassToTarget(), categorizeClasses(), getContextOverrideForLine()
+    │       ├── parser.ts         # extractClassRegions() state machine + @a11y-context annotation handling
     │       ├── region-resolver.ts  # buildEffectiveBg(), generatePairs(), resolveFileRegions()
     │       └── __tests__/
     │           ├── categorizer.test.ts
@@ -500,6 +500,7 @@ Genera un file Markdown o JSON con:
    - Violazioni non-testo (SC 1.4.11): tabella per file con Line, State, Type, Element, Against, Ratio, 3:1
 3. **Ignored violations**: Raggruppati per file con motivo della soppressione
 4. **Skipped classes**: Prime 50 classi non risolvibili, deduplicate tra temi
+5. **Footnote `†`**: Le coppie con contesto sovrascitto da `@a11y-context` sono marcate con `†` nella colonna Background. Una nota a pie di pagina spiega il significato
 
 Il file viene salvato in `{reportDir}/audit-YYYY-MM-DD.{md|json}` con suffisso incrementale se il file esiste gia (`-1`, `-2`, ..., fino a `-99`).
 
@@ -788,6 +789,16 @@ Inizializzazione:  [{ component: '_root', bg: defaultBg }]
 
 Il pop avviene solo se il nome del tag chiuso corrisponde al `component` in cima allo stack. Questo previene corruzione da tag HTML standard (`</div>`).
 
+**Annotation-driven entries**: Le annotazioni `@a11y-context-block` aggiungono entry allo stack con prefisso `_annotation_` (es. `_annotation_div`). Queste entry si comportano come i container normali — definiscono il `contextBg` per i figli — ma vengono poppate alla chiusura del tag annotato. Se `noInherit: true`, i figli del blocco non ereditano l'override (utile per annotazioni che si applicano solo all'elemento diretto).
+
+```
+{/* @a11y-context-block bg:#09090b */}
+<div>                push { component: '_annotation_div', bg: '#09090b', isAnnotation: true }
+  <p className=      currentContext() -> '#09090b'
+</div>               pop (match '_annotation_div')
+<p className=        currentContext() -> defaultBg (torna al contesto precedente)
+```
+
 **Override esplicito**: Se un container ha un `bg-*` esplicito nelle sue props (`<Card className="bg-white">`), `findExplicitBgInTag()` scansiona gli attributi del tag e usa quel colore al posto del default.
 
 **Self-closing**: `isSelfClosingTag()` distingue `<Card />` (nessun push) da `<Card>...</Card>` (push + pop). Rispetta `{}` e stringhe dentro le props per evitare falsi positivi su `>` nelle espressioni.
@@ -838,6 +849,84 @@ return { hex: '#ef4444', alpha: 0.5 }
 
 **Dove deve essere**: Il commento deve trovarsi sulla stessa riga o sulla riga immediatamente precedente al `className=`. Le coppie soppresse finiscono in `IgnoredViolation[]` con `ignoreReason`, vengono mostrate nel report ma non incrementano il conteggio delle violazioni e non causano `process.exit(1)`.
 
+### 6.10 Annotazioni `@a11y-context` e `@a11y-context-block`
+
+**Problema**: L'analisi statica inferisce lo sfondo dal DOM nesting (context stack), ma in molti casi il contesto visivo reale e diverso da quello strutturale:
+
+- **Posizionamento assoluto/fixed**: Un badge `position: absolute` su un overlay scuro viene verificato contro il parent DOM (spesso bianco), non contro lo sfondo visivo reale
+- **React Portals**: Il contenuto renderizzato via portal ha un parent DOM diverso dal parent visuale
+- **`currentColor`**: Classi come `border-current` ereditano il colore testo, ma il tool non puo inferirlo
+
+**Soluzione**: Due annotazioni comment-based che permettono di sovrascrivere il contesto inferito.
+
+**Sintassi**:
+
+```
+// @a11y-context bg:<valore> [fg:<valore>]           → singolo elemento (riga successiva)
+{/* @a11y-context bg:<valore> [fg:<valore>] */}       → singolo elemento (JSX)
+// @a11y-context-block bg:<valore> [no-inherit]       → blocco (tutti i figli)
+{/* @a11y-context-block bg:<valore> [no-inherit] */}  → blocco (JSX)
+```
+
+I valori possono essere classi Tailwind (`bg-slate-900`) o hex letterali (`#09090b`).
+
+**Flusso dati**:
+
+```
+Commento nel sorgente
+       |
+       v  getContextOverrideForLine() (categorizer.ts)
+ContextOverride { bg?, fg?, noInherit? }
+       |
+       v  parser.ts (state machine)
+       |
+       ├── @a11y-context     → pendingOverride → attaccato al ClassRegion successivo
+       └── @a11y-context-block → push su contextStack con prefisso _annotation_
+       |
+       v  region-resolver.ts (resolveFileRegions)
+       |
+       ├── bg override → sovrascrive contextBg
+       ├── fg override → sovrascrive textClasses con classe sintetica
+       └── contextSource = 'annotation' su tutte le coppie generate
+       |
+       v  report/markdown.ts
+       Footnote marker (†) sulle coppie con contextSource === 'annotation'
+```
+
+**Esempio pratico** — badge floating su overlay scuro:
+
+```jsx
+{/* @a11y-context bg:#09090b */}
+<span className="text-white absolute top-0">Badge</span>
+```
+
+Senza l'annotazione, `text-white` verrebbe verificato contro `bg-background` (#ffffff) → violazione. Con l'annotazione, viene verificato contro `#09090b` → passa.
+
+**Esempio blocco** — dialog con sfondo custom:
+
+```jsx
+{/* @a11y-context-block bg:bg-background */}
+<div>
+  <h2 className="text-foreground">Title</h2>
+  <p className="text-slate-600">Body</p>
+</div>
+```
+
+Tutte le coppie dentro il `<div>` usano `bg-background` come sfondo, indipendentemente dal context stack.
+
+**Pattern riconosciuti** (`src/plugins/jsx/categorizer.ts`):
+
+```
+// @a11y-context bg:#09090b
+// @a11y-context bg:bg-slate-900 fg:text-white
+{/* @a11y-context-block bg:bg-background */}
+{/* @a11y-context-block bg:#1a1a2e no-inherit */}
+```
+
+**Implementazione nel parser**: Il parsing delle annotazioni avviene nelle stesse sezioni di skip dei commenti (`//` e `/* */`) gia usate per `a11y-ignore`. Due regex separate distinguono `@a11y-context` (negative lookahead per `-block`) da `@a11y-context-block`. I parametri vengono estratti con `parseAnnotationParams()` che riconosce i token `bg:`, `fg:`, e `no-inherit`.
+
+**Report**: Le coppie con `contextSource === 'annotation'` sono marcate con `†` nella colonna Background del report Markdown. Una nota a pie di pagina spiega il significato del simbolo.
+
 ---
 
 ## 7. Strutture Dati Chiave
@@ -872,6 +961,21 @@ interface TaggedClass {
 }
 ```
 
+### ContextOverride
+
+```typescript
+interface ContextOverride {
+  /** Classe Tailwind (es. 'bg-slate-900') o hex letterale (es. '#09090b') */
+  bg?: string
+  /** Classe Tailwind (es. 'text-white') o hex letterale (es. '#ffffff') */
+  fg?: string
+  /** Quando true, i children del blocco non ereditano l'override */
+  noInherit?: boolean
+}
+```
+
+Prodotto da `getContextOverrideForLine()` (`categorizer.ts`) quando un commento `@a11y-context` o `@a11y-context-block` e presente sulla riga corrente o precedente. Viene attaccato al `ClassRegion` durante il parsing e usato dal resolver per sovrascrivere bg/fg inferiti.
+
 ### ClassRegion
 
 ```typescript
@@ -883,6 +987,7 @@ interface ClassRegion {
     color?: string
     backgroundColor?: string
   }
+  contextOverride?: ContextOverride  // Override da @a11y-context annotation
 }
 ```
 
@@ -903,6 +1008,7 @@ interface ColorPair {
   interactiveState?: InteractiveState | null
   ignored?: boolean
   ignoreReason?: string
+  contextSource?: 'inferred' | 'annotation'  // 'annotation' se overridden via @a11y-context
 }
 
 interface ContrastResult extends ColorPair {
@@ -1061,7 +1167,7 @@ Se Tailwind aggiunge nuove utility con prefisso ambiguo e il report mostra "Unre
 
 ## 9. Testing
 
-### Struttura (353 test, 16 file)
+### Struttura (384 test, 16 file)
 
 Il test suite e organizzato in quattro livelli:
 
@@ -1127,6 +1233,8 @@ npm run typecheck         # tsc --noEmit (strict mode)
 | `@apply` in CSS | Il tool legge solo file template, non `.css` | Non analizzati | Raro — solo in file di configurazione globali |
 | Ternari cross-branch | `cond ? 'bg-A text-A' : 'bg-B text-B'` → audit vede bg-A+text-B | Falsi positivi | `// a11y-ignore: mutually exclusive ternary` |
 | cva cross-variant | cva estrae tutti i letterali da tutte le varianti | Falsi positivi | `// a11y-ignore: cross-variant cva` |
+| Posizionamento assoluto/fixed | DOM nesting ≠ visual nesting | Falsi positivi/negativi per elementi sovrapposti | `// @a11y-context bg:<sfondo-reale>` |
+| React Portals | Portal renderizza fuori dal parent DOM | Sfondo inferito errato | `// @a11y-context bg:<sfondo-reale>` |
 | Trasparenze impilate | Compositing solo contro il container piu vicino | Hex leggermente diverso dal reale | Impatto trascurabile in pratica |
 | `1rem = 16px` hardcoded | ALWAYS_LARGE/LARGE_IF_BOLD usano pixel statici | Se root font-size cambia, soglie imprecise | `rootFontSizePx` e disponibile per futura integrazione |
 
@@ -1262,6 +1370,15 @@ A: Si. `findTailwindPalette()` cerca `node_modules/tailwindcss/theme.css` parten
 **Q: Posso avere output sia Markdown che JSON?**
 A: Non nella stessa esecuzione. Eseguire due volte con `--format markdown` e `--format json`, oppure usare l'API programmatica.
 
+**Q: Come uso `@a11y-context` per correggere un falso positivo da posizionamento assoluto?**
+A: Aggiungi un commento sulla riga precedente al `className=` con lo sfondo reale: `// @a11y-context bg:#09090b` (hex) o `// @a11y-context bg:bg-slate-900` (classe Tailwind). Nel report, la coppia sara marcata con `†`.
+
+**Q: Qual e la differenza tra `@a11y-context` e `@a11y-context-block`?**
+A: `@a11y-context` si applica solo all'elemento immediatamente successivo (singola riga). `@a11y-context-block` si applica a tutti i figli del tag successivo (push/pop sul context stack). Usare `-block` per dialog, overlay, o sezioni con sfondo uniforme.
+
+**Q: Posso sovrascrivere sia bg che fg con `@a11y-context`?**
+A: Si. Usa `// @a11y-context bg:#09090b fg:text-white`. L'override `fg:` sostituisce tutte le classi testo estratte con una classe sintetica.
+
 ---
 
 ## 13. Glossario
@@ -1277,6 +1394,9 @@ A: Non nella stessa esecuzione. Eseguire due volte con `--format markdown` e `--
 | **ContrastResult** | ColorPair arricchito con ratio e verdetti pass/fail |
 | **Compositing** | Appiattimento di un colore trasparente su uno sfondo opaco |
 | **Tracked state** | Pseudo-classe CSS che genera coppie verificabili (hover, focus-visible, aria-disabled) |
-| **Context stack** | Stack LIFO che traccia lo sfondo implicito dei container JSX annidati |
+| **Context stack** | Stack LIFO che traccia lo sfondo implicito dei container JSX annidati. Include entry da container config e da `@a11y-context-block` |
+| **ContextOverride** | Override di contesto da annotazione `@a11y-context` o `@a11y-context-block`. Contiene bg?, fg?, noInherit? |
+| **`@a11y-context`** | Annotazione comment-based che sovrascrive il contesto bg/fg per un singolo elemento |
+| **`@a11y-context-block`** | Annotazione comment-based che sovrascrive il contesto bg per tutti i figli di un blocco (push sul context stack) |
 | **Preset** | Set predefinito di container contexts (es. `shadcn` = 21 componenti) |
 | **Pipeline** | Sequenza di 5 fasi: config → bootstrap → extract → resolve → report |
