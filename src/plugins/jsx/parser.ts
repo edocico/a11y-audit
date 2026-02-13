@@ -7,6 +7,10 @@ import { BG_NON_COLOR, extractBalancedParens } from './categorizer.js';
 const A11Y_CONTEXT_SINGLE_REGEX =
   /(?:\/\/|\/\*)\s*@a11y-context(?!-block)\s+(.*?)(?:\s*\*\/)?$/;
 
+/** Matches @a11y-context-block in a comment */
+const A11Y_CONTEXT_BLOCK_REGEX =
+  /(?:\/\/|\/\*)\s*@a11y-context-block\s+(.*?)(?:\s*\*\/)?$/;
+
 /**
  * Parses annotation parameters from the body of an @a11y-context comment.
  * @internal Exported for unit testing
@@ -258,13 +262,16 @@ export function extractClassRegions(
   }
 
   // ── Context Stack: tracks implied bg from container components ──
-  const contextStack: Array<{ component: string; bg: string }> = [
+  const contextStack: Array<{ component: string; bg: string; isAnnotation?: boolean; noInherit?: boolean }> = [
     { component: '_root', bg: defaultBg },
   ];
 
   // ── Single-element @a11y-context override state ──
   let pendingOverride: ContextOverride | null = null;
   let currentTagOverride: ContextOverride | null = null;
+
+  // ── Block-scoped @a11y-context-block override state ──
+  let pendingBlockOverride: ContextOverride | null = null;
 
   function currentContext(): string {
     return contextStack[contextStack.length - 1]!.bg;
@@ -294,6 +301,10 @@ export function extractClassRegions(
         const match = A11Y_CONTEXT_SINGLE_REGEX.exec(commentText);
         if (match) pendingOverride = parseAnnotationParams(match[1]!);
       }
+      if (/@a11y-context-block/.test(commentText)) {
+        const match = A11Y_CONTEXT_BLOCK_REGEX.exec(commentText);
+        if (match) pendingBlockOverride = parseAnnotationParams(match[1]!);
+      }
       continue;
     }
 
@@ -308,6 +319,10 @@ export function extractClassRegions(
         const match = A11Y_CONTEXT_SINGLE_REGEX.exec(commentText);
         if (match) pendingOverride = parseAnnotationParams(match[1]!);
       }
+      if (/@a11y-context-block/.test(commentText)) {
+        const match = A11Y_CONTEXT_BLOCK_REGEX.exec(commentText);
+        if (match) pendingBlockOverride = parseAnnotationParams(match[1]!);
+      }
       continue;
     }
 
@@ -319,6 +334,20 @@ export function extractClassRegions(
       if (next !== '/' && next !== '!') {
         currentTagOverride = pendingOverride;
         pendingOverride = null;
+
+        // Block override: push annotation onto context stack for the next container tag
+        if (pendingBlockOverride) {
+          const blockTag = readTagName(source, i + 1);
+          if (blockTag.name && !isSelfClosingTag(source, blockTag.end)) {
+            contextStack.push({
+              component: `_annotation_${blockTag.name}`,
+              bg: pendingBlockOverride.bg || currentContext(),
+              isAnnotation: true,
+              noInherit: pendingBlockOverride.noInherit,
+            });
+          }
+          pendingBlockOverride = null;
+        }
       }
 
       // Closing tag: </ComponentName>
@@ -330,6 +359,15 @@ export function extractClassRegions(
             bg &&
             contextStack.length > 1 &&
             contextStack[contextStack.length - 1]!.component === tag.name
+          ) {
+            contextStack.pop();
+          }
+
+          // Pop annotation block entries
+          const annotationKey = `_annotation_${tag.name}`;
+          if (
+            contextStack.length > 1 &&
+            contextStack[contextStack.length - 1]!.component === annotationKey
           ) {
             contextStack.pop();
           }

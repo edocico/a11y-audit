@@ -389,3 +389,81 @@ describe('@a11y-context (single-element)', () => {
     expect(regions[0]!.contextOverride).toBeUndefined();
   });
 });
+
+// ── @a11y-context-block (block scope) ──────────────────────────────────
+
+describe('@a11y-context-block (block scope)', () => {
+  test('block annotation overrides contextBg for children', () => {
+    const source = [
+      '{/* @a11y-context-block bg:bg-slate-900 */}',
+      '<div>',
+      '  <span className="text-white">Badge</span>',
+      '</div>',
+    ].join('\n');
+    const regions = extract(source);
+
+    expect(regions).toHaveLength(1);
+    expect(regions[0]!.contextBg).toBe('bg-slate-900');
+  });
+
+  test('block annotation applies to multiple children', () => {
+    const source = [
+      '{/* @a11y-context-block bg:bg-background */}',
+      '<div>',
+      '  <h2 className="text-foreground">Title</h2>',
+      '  <p className="text-muted-foreground">Body</p>',
+      '</div>',
+    ].join('\n');
+    const regions = extract(source);
+
+    expect(regions).toHaveLength(2);
+    expect(regions[0]!.contextBg).toBe('bg-background');
+    expect(regions[1]!.contextBg).toBe('bg-background');
+  });
+
+  test('block annotation does not leak past closing tag', () => {
+    const source = [
+      '{/* @a11y-context-block bg:bg-slate-900 */}',
+      '<div>',
+      '  <span className="text-white">Inside</span>',
+      '</div>',
+      '<span className="text-black">Outside</span>',
+    ].join('\n');
+    const regions = extract(source);
+
+    expect(regions).toHaveLength(2);
+    expect(regions[0]!.contextBg).toBe('bg-slate-900');
+    expect(regions[1]!.contextBg).toBe(defaultBg);
+  });
+
+  test('no-inherit: container inside block uses own bg, not annotation bg', () => {
+    // Card is in the shadcn containerMap with bg-card
+    const source = [
+      '{/* @a11y-context-block bg:bg-background no-inherit */}',
+      '<div>',
+      '  <span className="text-white">Direct child</span>',
+      '  <Card>',
+      '    <span className="text-foreground">Inside Card</span>',
+      '  </Card>',
+      '</div>',
+    ].join('\n');
+    const regions = extract(source);
+
+    expect(regions).toHaveLength(2);
+    expect(regions[0]!.contextBg).toBe('bg-background');
+    expect(regions[1]!.contextBg).toBe('bg-card');
+  });
+
+  test('block annotation with hex value', () => {
+    const source = [
+      '// @a11y-context-block bg:#09090b',
+      '<div>',
+      '  <span className="text-white">Dark bg</span>',
+      '</div>',
+    ].join('\n');
+    const regions = extract(source);
+
+    expect(regions).toHaveLength(1);
+    expect(regions[0]!.contextBg).toBe('#09090b');
+  });
+});
