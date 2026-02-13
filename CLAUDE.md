@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A framework-agnostic static contrast audit library for WCAG 2.1 AA/AAA and APCA. It's being ported from an internal `multicoin-frontend` audit script (2352 LOC + 343 tests) into a standalone npm package with a plugin architecture. Both a programmatic API (`src/index.ts`) and a CLI (`src/bin/cli.ts`) are planned; the CLI is scaffolded but not yet wired to the core pipeline.
+A framework-agnostic static contrast audit library for WCAG 2.1 AA/AAA and APCA. Ported from an internal `multicoin-frontend` audit script (2352 LOC + 343 tests) into a standalone npm package with a plugin architecture. Both a programmatic API (`src/index.ts`) and a CLI (`src/bin/cli.ts`) are functional.
 
 ### Reference documents
 
@@ -25,7 +25,7 @@ npm run typecheck      # tsc --noEmit (strict mode)
 
 ## Architecture
 
-**Port-in-progress from multicoin-frontend.** Modules are migrated one at a time with full test coverage before moving to the next. The pipeline is not yet connected end-to-end.
+**Ported from multicoin-frontend.** All 6 phases complete. 353 tests passing across 16 test files. Pipeline connected end-to-end.
 
 **Target architecture (Layered Onion):** pure math core → plugin interfaces (`ColorResolver`, `FileParser`, `ContainerConfig`) → config (`zod` + `lilconfig`) → CLI (`commander`). Tailwind + JSX are the first plugin implementations.
 
@@ -34,11 +34,18 @@ npm run typecheck      # tsc --noEmit (strict mode)
 - `src/core/types.ts` — All shared types. Single source of truth; re-exported via `src/types/public.ts` → `src/index.ts`.
 - `src/core/color-utils.ts` — `toHex()`: normalizes any CSS color (oklch, hsl, rgb, display-p3, hex) to 6- or 8-digit hex. Uses `culori` for parsing.
 - `src/core/contrast-checker.ts` — `checkAllPairs()`: WCAG contrast checking with alpha compositing, APCA Lc calculation, AA/AAA level selection, and `// a11y-ignore` suppression. Uses `colord` for contrast ratios and `apca-w3` for APCA.
-- `src/bin/cli.ts` — Commander-based CLI (stub, not yet wired).
-
-### Pending modules (not yet ported)
-
-The `TODO` comments in `src/index.ts` indicate these are planned: `pipeline.js` (orchestrator), `config.js` (defineConfig), file scanning/extraction, reporting.
+- `src/bin/cli.ts` — Commander-based CLI: loads config via `lilconfig`, merges CLI flags, runs pipeline.
+- `src/core/pipeline.ts` — `runAudit()`: orchestrates extract-once/resolve-twice flow, writes reports to disk.
+- `src/core/report/json.ts` — `generateJsonReport()`: structured JSON output with summary + per-theme data.
+- `src/core/report/markdown.ts` — `generateReport()`: Markdown audit reports grouped by file, SC 1.4.3/1.4.11 separation, APCA support.
+- `src/plugins/interfaces.ts` — Plugin contracts: `ColorResolver`, `FileParser`, `ContainerConfig`, `AuditConfig`.
+- `src/config/schema.ts` — Zod schema `auditConfigSchema` with defaults; `loader.ts` uses `lilconfig`.
+- `src/plugins/tailwind/css-resolver.ts` — CSS variable resolution: `buildThemeColorMaps()`, `resolveClassToHex()`, balanced-brace parsing, alpha compositing helpers.
+- `src/plugins/tailwind/palette.ts` — `extractTailwindPalette()` + `findTailwindPalette()` for Tailwind v4 color palette extraction.
+- `src/plugins/tailwind/presets/shadcn.ts` — shadcn/ui container preset (21 component→bg mappings). Implements `ContainerConfig`.
+- `src/plugins/jsx/categorizer.ts` — Pure classification functions: `stripVariants()`, `routeClassToTarget()`, `categorizeClasses()`, `determineIsLargeText()`, `extractBalancedParens()`, `extractStringLiterals()`, `getIgnoreReasonForLine()`. Exports `TaggedClass`, `ClassBuckets`, `ForegroundGroup`, `PairMeta` interfaces.
+- `src/plugins/jsx/parser.ts` — JSX state machine: `extractClassRegions(source, containerMap, defaultBg)`, `isSelfClosingTag()`, `findExplicitBgInTag()`, `extractInlineStyleColors()`. The container map is injected (not imported globally).
+- `src/plugins/jsx/region-resolver.ts` — Bg/fg pairing logic: `buildEffectiveBg()`, `generatePairs()`, `resolveFileRegions()`, `extractAllFileRegions(srcPatterns, cwd, containerMap, defaultBg)`. Cross-plugin dependency: imports `resolveClassToHex` from `tailwind/css-resolver.ts`.
 
 ### Original tool pipeline (context for porting)
 
@@ -62,6 +69,15 @@ The source script follows: Bootstrap → Extract (file I/O + state-machine parsi
 
 The project uses a strict tsconfig: `noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`, `verbatimModuleSyntax`. All imports from `.ts` files must use `.js` extensions (ESM resolution with bundler module resolution).
 
+- `noUncheckedIndexedAccess` means regex capture groups (`match[1]`) and string indexing (`hex[1]`) need `!` non-null assertions when certain the match exists.
+
 ## Porting Workflow
 
 When porting a module from the original script: read the source in `../multicoin-frontend/scripts/a11y-audit/`, port its tests first (adapt paths/imports), then port the implementation to make them pass. Hardcoded paths must become configurable via plugin interfaces or config. The plan's task list is the order of operations — each task specifies source file, target location, and acceptance criteria.
+
+## Gotchas
+
+- **Zod nested defaults**: `z.object({ field: z.string().default('x') }).default({})` produces `{}`, not `{ field: 'x' }`. Use `.default({ field: 'x' })` with explicit values on the outer default.
+- **vitest in worktrees**: If using worktrees, run vitest from the worktree root, not the main project root.
+- **file-scanner.ts split**: The original 1258-LOC `file-scanner.ts` is split into 3 modules: `categorizer.ts` (pure classification), `parser.ts` (state machine), `region-resolver.ts` (pairing). `extractBalancedParens` lives in categorizer and is imported by parser.
+- **Plan vs actual test paths**: The plan references `tests/core/...` paths, but the actual convention is co-located `src/<module>/__tests__/`. Always follow the co-located pattern.
