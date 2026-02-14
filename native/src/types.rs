@@ -14,6 +14,8 @@ pub struct ClassRegion {
     pub context_override_no_inherit: Option<bool>,
     pub ignored: Option<bool>,
     pub ignore_reason: Option<String>,
+    /// US-05: cumulative opacity from ancestor containers (0.0-1.0). None = fully opaque.
+    pub effective_opacity: Option<f64>,
 }
 
 /// Equivalent of TypeScript ResolvedColor

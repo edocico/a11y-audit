@@ -29,6 +29,7 @@ impl ClassExtractor {
     /// - `context_bg`: current effective background from ContextTracker
     /// - `context_override`: pending @a11y-context override (consumed)
     /// - `ignore_reason`: pending a11y-ignore reason (consumed)
+    /// - `effective_opacity`: US-05 cumulative opacity from ancestors (None = fully opaque)
     pub fn record(
         &mut self,
         content: &str,
@@ -37,8 +38,14 @@ impl ClassExtractor {
         context_bg: &str,
         context_override: Option<ContextOverride>,
         ignore_reason: Option<String>,
+        effective_opacity: Option<f32>,
     ) {
         let inline_styles = extract_inline_style_colors(raw_tag);
+
+        // Only store opacity if < 1.0 (saves serialization overhead)
+        let opacity = effective_opacity.and_then(|o| {
+            if o >= 0.999 { None } else { Some(o as f64) }
+        });
 
         let mut region = ClassRegion {
             content: content.to_string(),
@@ -51,6 +58,7 @@ impl ClassExtractor {
             context_override_no_inherit: None,
             ignored: None,
             ignore_reason: None,
+            effective_opacity: opacity,
         };
 
         // Apply @a11y-context override
@@ -200,7 +208,7 @@ mod tests {
     #[test]
     fn record_simple_classname() {
         let mut ext = make_extractor();
-        ext.record("bg-red-500 text-white", 1, "<div>", "bg-background", None, None);
+        ext.record("bg-red-500 text-white", 1, "<div>", "bg-background", None, None, None);
         let regions = ext.into_regions();
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].content, "bg-red-500 text-white");
@@ -211,7 +219,7 @@ mod tests {
     #[test]
     fn record_with_context_bg() {
         let mut ext = make_extractor();
-        ext.record("text-white", 5, "<span>", "bg-card", None, None);
+        ext.record("text-white", 5, "<span>", "bg-card", None, None, None);
         let regions = ext.into_regions();
         assert_eq!(regions[0].context_bg, "bg-card");
     }
@@ -224,7 +232,7 @@ mod tests {
             fg: None,
             no_inherit: false,
         };
-        ext.record("text-white", 1, "<div>", "bg-background", Some(ovr), None);
+        ext.record("text-white", 1, "<div>", "bg-background", Some(ovr), None, None);
         let regions = ext.into_regions();
         assert_eq!(regions[0].context_override_bg, Some("#09090b".to_string()));
         assert_eq!(regions[0].context_override_fg, None);
@@ -239,7 +247,7 @@ mod tests {
             fg: Some("text-white".to_string()),
             no_inherit: true,
         };
-        ext.record("text-muted-foreground", 1, "<p>", "bg-background", Some(ovr), None);
+        ext.record("text-muted-foreground", 1, "<p>", "bg-background", Some(ovr), None, None);
         let regions = ext.into_regions();
         assert_eq!(regions[0].context_override_bg, Some("bg-slate-900".to_string()));
         assert_eq!(regions[0].context_override_fg, Some("text-white".to_string()));
@@ -249,7 +257,7 @@ mod tests {
     #[test]
     fn record_with_ignore_reason() {
         let mut ext = make_extractor();
-        ext.record("text-white", 1, "<div>", "bg-background", None, Some("dynamic background".to_string()));
+        ext.record("text-white", 1, "<div>", "bg-background", None, Some("dynamic background".to_string()), None);
         let regions = ext.into_regions();
         assert_eq!(regions[0].ignored, Some(true));
         assert_eq!(regions[0].ignore_reason, Some("dynamic background".to_string()));
@@ -258,7 +266,7 @@ mod tests {
     #[test]
     fn record_with_empty_ignore_reason() {
         let mut ext = make_extractor();
-        ext.record("text-white", 1, "<div>", "bg-background", None, Some(String::new()));
+        ext.record("text-white", 1, "<div>", "bg-background", None, Some(String::new()), None);
         let regions = ext.into_regions();
         assert_eq!(regions[0].ignored, Some(true));
         assert_eq!(regions[0].ignore_reason, Some("suppressed".to_string()));
@@ -267,9 +275,9 @@ mod tests {
     #[test]
     fn record_multiple() {
         let mut ext = make_extractor();
-        ext.record("bg-card p-4", 3, "<div>", "bg-background", None, None);
-        ext.record("text-card-foreground", 4, "<h1>", "bg-card", None, None);
-        ext.record("text-muted-foreground", 5, "<p>", "bg-card", None, None);
+        ext.record("bg-card p-4", 3, "<div>", "bg-background", None, None, None);
+        ext.record("text-card-foreground", 4, "<h1>", "bg-card", None, None, None);
+        ext.record("text-muted-foreground", 5, "<p>", "bg-card", None, None, None);
         let regions = ext.into_regions();
         assert_eq!(regions.len(), 3);
         assert_eq!(regions[1].context_bg, "bg-card");
@@ -288,6 +296,7 @@ mod tests {
             "bg-background",
             None,
             None,
+            None,
         );
         let regions = ext.into_regions();
         assert_eq!(regions[0].inline_color, Some("red".to_string()));
@@ -301,6 +310,7 @@ mod tests {
             1,
             r#"<div style={{ backgroundColor: '#ff0000' }} className="text-white">"#,
             "bg-background",
+            None,
             None,
             None,
         );
@@ -318,6 +328,7 @@ mod tests {
             "bg-background",
             None,
             None,
+            None,
         );
         let regions = ext.into_regions();
         assert_eq!(regions[0].inline_color, Some("#fff".to_string()));
@@ -327,7 +338,7 @@ mod tests {
     #[test]
     fn no_inline_style_returns_none() {
         let mut ext = make_extractor();
-        ext.record("text-white", 1, r#"<div className="text-white">"#, "bg-background", None, None);
+        ext.record("text-white", 1, r#"<div className="text-white">"#, "bg-background", None, None, None);
         let regions = ext.into_regions();
         assert_eq!(regions[0].inline_color, None);
         assert_eq!(regions[0].inline_background_color, None);
@@ -384,5 +395,32 @@ mod tests {
     #[test]
     fn property_no_match() {
         assert_eq!(extract_style_property(r#" display: "flex" "#, "color"), None);
+    }
+
+    // ── Effective opacity tests ──
+
+    #[test]
+    fn record_with_effective_opacity() {
+        let mut ext = make_extractor();
+        ext.record("text-white", 1, "<div>", "bg-background", None, None, Some(0.5));
+        let regions = ext.into_regions();
+        assert_eq!(regions[0].effective_opacity, Some(0.5));
+    }
+
+    #[test]
+    fn record_without_opacity_is_none() {
+        let mut ext = make_extractor();
+        ext.record("text-white", 1, "<div>", "bg-background", None, None, None);
+        let regions = ext.into_regions();
+        assert_eq!(regions[0].effective_opacity, None);
+    }
+
+    #[test]
+    fn record_fully_opaque_is_none() {
+        let mut ext = make_extractor();
+        ext.record("text-white", 1, "<div>", "bg-background", None, None, Some(1.0));
+        let regions = ext.into_regions();
+        // 1.0 = fully opaque = no need to store
+        assert_eq!(regions[0].effective_opacity, None);
     }
 }

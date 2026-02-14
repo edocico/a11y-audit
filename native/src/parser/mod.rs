@@ -98,7 +98,10 @@ impl JsxVisitor for ScanOrchestrator {
             ignore_reason
         };
 
-        // 4. Build ClassRegion via ClassExtractor
+        // 4. US-05: Get cumulative opacity (element's own, captured AFTER on_tag_open)
+        let effective_opacity = Some(self.context_tracker.current_opacity());
+
+        // 5. Build ClassRegion via ClassExtractor
         self.class_extractor.record(
             value,
             line,
@@ -106,6 +109,7 @@ impl JsxVisitor for ScanOrchestrator {
             &context_bg,
             context_override,
             final_ignore_reason,
+            effective_opacity,
         );
     }
 }
@@ -470,5 +474,55 @@ mod integration_tests {
         let regions = scan_file(source, &config, "bg-background");
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].context_bg, "bg-background"); // NOT bg-card
+    }
+
+    // ── Opacity propagation (US-05) ──
+
+    #[test]
+    fn opacity_propagated_to_region() {
+        let source = r##"<div className="opacity-50">
+    <span className="text-white">x</span>
+</div>"##;
+        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        assert_eq!(regions.len(), 2);
+        // div itself: opacity-50 is on this element -> effective = 0.5
+        assert_eq!(regions[0].effective_opacity, Some(0.5));
+        // span inside: inherits 0.5 from parent
+        assert_eq!(regions[1].effective_opacity, Some(0.5));
+    }
+
+    #[test]
+    fn nested_opacity_multiplied() {
+        let source = r##"<div className="opacity-50">
+    <div className="opacity-50">
+        <span className="text-white">x</span>
+    </div>
+</div>"##;
+        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let inner_span = &regions[2];
+        // 0.5 * 0.5 = 0.25
+        assert!((inner_span.effective_opacity.unwrap() - 0.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn no_opacity_returns_none() {
+        let source = r##"<div className="bg-red-500 text-white">x</div>"##;
+        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        assert_eq!(regions[0].effective_opacity, None);
+    }
+
+    #[test]
+    fn container_with_opacity_integration() {
+        let config = make_config(&[("Card", "bg-card")]);
+        let source = r##"<Card className="opacity-75">
+    <span className="text-white">x</span>
+</Card>"##;
+        let regions = scan_file(source, &config, "bg-background");
+        // Card's own className: opacity 0.75
+        assert_eq!(regions[0].effective_opacity, Some(0.75));
+        assert_eq!(regions[0].context_bg, "bg-background"); // parent bg (pre_tag_open)
+        // span inside: inherits Card's opacity
+        assert_eq!(regions[1].effective_opacity, Some(0.75));
+        assert_eq!(regions[1].context_bg, "bg-card"); // Card's bg
     }
 }
