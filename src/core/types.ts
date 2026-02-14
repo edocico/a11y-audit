@@ -37,6 +37,8 @@ export interface ColorPair {
   ignoreReason?: string;
   /** 'inferred' = bg determined by parser stack, 'annotation' = overridden via @a11y-context */
   contextSource?: 'inferred' | 'annotation';
+  /** US-05: Cumulative opacity applied to this pair (0.0-1.0). undefined = fully opaque. */
+  effectiveOpacity?: number;
 }
 
 /** Result of a WCAG contrast check */
@@ -112,6 +114,8 @@ export interface ClassRegion {
   };
   /** Context override from an @a11y-context annotation on the same/preceding line */
   contextOverride?: ContextOverride;
+  /** US-05: Cumulative opacity from ancestor containers (0.0-1.0). undefined = fully opaque. */
+  effectiveOpacity?: number;
 }
 
 /** Pre-extracted file data, theme-agnostic. Used for extract-once/resolve-twice pattern. */

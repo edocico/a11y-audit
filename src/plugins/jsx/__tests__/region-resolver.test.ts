@@ -326,6 +326,106 @@ describe('generatePairs', () => {
     expect(result.pairs[0]!.bgHex).toBe('#ffffff');
     expect(result.pairs[0]!.textHex).toBe('#ffffff');
   });
+
+  // ── US-05: Opacity propagation ──
+
+  describe('opacity propagation', () => {
+    const opacityColorMap: ColorMap = new Map([
+      ['--color-background', { hex: '#ffffff' }],
+      ['--color-white', { hex: '#ffffff' }],
+      ['--color-black', { hex: '#000000' }],
+    ]);
+
+    test('effectiveOpacity is propagated to pair', () => {
+      const bg = [makeTagged('bg-background')];
+      const fgGroups: ForegroundGroup[] = [
+        { classes: [makeTagged('text-black')] },
+      ];
+      const meta: PairMeta = {
+        file: 'test.tsx',
+        line: 1,
+        ignoreReason: null,
+        isLargeText: false,
+        effectiveOpacity: 0.5,
+      };
+      const { pairs } = generatePairs(fgGroups, bg, meta, opacityColorMap, false, 'bg-background');
+      expect(pairs).toHaveLength(1);
+      expect(pairs[0]!.effectiveOpacity).toBe(0.5);
+    });
+
+    test('effectiveOpacity reduces alpha on both bg and text', () => {
+      const bg = [makeTagged('bg-background')];
+      const fgGroups: ForegroundGroup[] = [
+        { classes: [makeTagged('text-black')] },
+      ];
+      const meta: PairMeta = {
+        file: 'test.tsx',
+        line: 1,
+        ignoreReason: null,
+        isLargeText: false,
+        effectiveOpacity: 0.5,
+      };
+      const { pairs } = generatePairs(fgGroups, bg, meta, opacityColorMap, false, 'bg-background');
+      expect(pairs[0]!.bgAlpha).toBe(0.5);
+      expect(pairs[0]!.textAlpha).toBe(0.5);
+    });
+
+    test('no effectiveOpacity means no alpha reduction', () => {
+      const bg = [makeTagged('bg-background')];
+      const fgGroups: ForegroundGroup[] = [
+        { classes: [makeTagged('text-black')] },
+      ];
+      const meta: PairMeta = {
+        file: 'test.tsx',
+        line: 1,
+        ignoreReason: null,
+        isLargeText: false,
+      };
+      const { pairs } = generatePairs(fgGroups, bg, meta, opacityColorMap, false, 'bg-background');
+      expect(pairs[0]!.effectiveOpacity).toBeUndefined();
+      expect(pairs[0]!.bgAlpha).toBeUndefined();
+      expect(pairs[0]!.textAlpha).toBeUndefined();
+    });
+
+    test('effectiveOpacity 1.0 does not reduce alpha', () => {
+      const bg = [makeTagged('bg-background')];
+      const fgGroups: ForegroundGroup[] = [
+        { classes: [makeTagged('text-black')] },
+      ];
+      const meta: PairMeta = {
+        file: 'test.tsx',
+        line: 1,
+        ignoreReason: null,
+        isLargeText: false,
+        effectiveOpacity: 1,
+      };
+      const { pairs } = generatePairs(fgGroups, bg, meta, opacityColorMap, false, 'bg-background');
+      expect(pairs[0]!.effectiveOpacity).toBeUndefined();
+      expect(pairs[0]!.bgAlpha).toBeUndefined();
+      expect(pairs[0]!.textAlpha).toBeUndefined();
+    });
+
+    test('effectiveOpacity multiplies with existing alpha', () => {
+      const alphaColorMap: ColorMap = new Map([
+        ['--color-background', { hex: '#ffffff', alpha: 0.8 }],
+        ['--color-black', { hex: '#000000', alpha: 0.9 }],
+      ]);
+      const bg = [makeTagged('bg-background')];
+      const fgGroups: ForegroundGroup[] = [
+        { classes: [makeTagged('text-black')] },
+      ];
+      const meta: PairMeta = {
+        file: 'test.tsx',
+        line: 1,
+        ignoreReason: null,
+        isLargeText: false,
+        effectiveOpacity: 0.5,
+      };
+      const { pairs } = generatePairs(fgGroups, bg, meta, alphaColorMap, false, 'bg-background');
+      expect(pairs[0]!.bgAlpha).toBeCloseTo(0.4); // 0.8 * 0.5
+      expect(pairs[0]!.textAlpha).toBeCloseTo(0.45); // 0.9 * 0.5
+    });
+  });
 });
 
 // ── contextOverride in resolveFileRegions ──────────────────────────────
@@ -388,5 +488,30 @@ describe('contextOverride in resolveFileRegions', () => {
 
     expect(result.pairs).toHaveLength(1);
     expect(result.pairs[0]!.contextSource).toBeUndefined();
+  });
+
+  test('effectiveOpacity flows from region to pair', () => {
+    const opacityColorMap: ColorMap = new Map([
+      ['--color-background', { hex: '#ffffff' }],
+      ['--color-black', { hex: '#000000' }],
+    ]);
+    const preExtracted: PreExtracted = {
+      files: [{
+        relPath: 'test.tsx',
+        lines: ['<div className="text-black">x</div>'],
+        regions: [{
+          content: 'text-black',
+          startLine: 1,
+          contextBg: 'bg-background',
+          effectiveOpacity: 0.5,
+        }],
+      }],
+      readErrors: [],
+      filesScanned: 1,
+    };
+    const { pairs } = resolveFileRegions(preExtracted, opacityColorMap, 'light');
+    expect(pairs[0]!.effectiveOpacity).toBe(0.5);
+    expect(pairs[0]!.bgAlpha).toBe(0.5);
+    expect(pairs[0]!.textAlpha).toBe(0.5);
   });
 });

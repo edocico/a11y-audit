@@ -12,6 +12,7 @@ export interface NativeClassRegion {
     contextOverrideNoInherit?: boolean | null;
     ignored?: boolean | null;
     ignoreReason?: string | null;
+    effectiveOpacity?: number | null;
 }
 
 export interface NativePreExtractedFile {

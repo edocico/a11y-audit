@@ -235,6 +235,7 @@ export interface PairMeta {
   ignoreReason: string | null;
   isLargeText: boolean;
   interactiveState?: InteractiveState | null;
+  effectiveOpacity?: number;
 }
 
 /** Result of generating pairs for a single set of fg/bg classes */

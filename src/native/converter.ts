@@ -40,6 +40,11 @@ function convertNativeRegion(native: NativeClassRegion): ClassRegion {
         region.contextOverride = override;
     }
 
+    // US-05: Bridge effective opacity
+    if (native.effectiveOpacity != null) {
+        region.effectiveOpacity = native.effectiveOpacity;
+    }
+
     return region;
 }
 

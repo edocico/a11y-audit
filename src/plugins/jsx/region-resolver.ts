@@ -151,6 +151,13 @@ export function generatePairs(
           pair.interactiveState = meta.interactiveState;
         }
 
+        // US-05: Apply effective opacity as alpha reduction
+        if (meta.effectiveOpacity != null && meta.effectiveOpacity < 1) {
+          pair.effectiveOpacity = meta.effectiveOpacity;
+          pair.textAlpha = (pair.textAlpha ?? 1) * meta.effectiveOpacity;
+          pair.bgAlpha = (pair.bgAlpha ?? 1) * meta.effectiveOpacity;
+        }
+
         pairs.push(pair);
       }
     }
@@ -254,6 +261,7 @@ export function resolveFileRegions(
         line: lineNum,
         ignoreReason,
         isLargeText,
+        effectiveOpacity: region.effectiveOpacity,
       };
 
       // Base pairs (text SC 1.4.3 + non-text SC 1.4.11)
