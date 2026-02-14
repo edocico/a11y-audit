@@ -1,6 +1,6 @@
 # Architettura Tecnica: a11y-audit Library (v1.0)
 
-> **Ultimo aggiornamento**: 2026-02-14 | **Versione**: 1.1.0 (standalone npm package) | **~434 test TS across 23 files + 223 test Rust across 13 moduli**
+> **Ultimo aggiornamento**: 2026-02-14 | **Versione**: 1.2.0 (standalone npm package) | **~450 test TS across 24 files + 287 test Rust across 14 moduli**
 
 ---
 
@@ -100,7 +100,14 @@ resolve(light)    resolve(dark)   <-- risoluzione per-tema (DUE volte)
 - Bridge NAPI-RS completo (`lib.rs`) con converter TS (`converter.ts`) per la ricostruzione di struct annidate
 - Pipeline integrata con auto-detection (`isNativeAvailable()`) e fallback legacy
 - 223 test Rust passanti, cross-validati contro i ground truth generati dalle librerie TS (colord, apca-w3, culori)
-- Cross-validation script (`native/scripts/full_cross_validate.mts`): 25 fixture parser + 8 math pairs verificano parita di output tra engine Rust e parser TS
+- Cross-validation script (`native/scripts/full_cross_validate.mts`): 31 fixture parser (25 base + 3 opacity + 3 portal native-only) + 8 math pairs verificano parita di output tra engine Rust e parser TS
+
+**Phase 3 — Parser Precision (12/12 task)**:
+
+- **US-05 Opacity Stack**: `ContextTracker` traccia `cumulative_opacity` (campo `StackEntry`). Ogni container/tag con classe `opacity-*` moltiplica l'opacita del parent. Elementi con opacita cumulativa < 10% (`< 0.10`) sono marcati come `ignored` con reason "Near-invisible element". `opacity.rs` parsa classi come `opacity-50`, `opacity-[0.3]`, `opacity-[30%]`.
+- **US-04 Portal Context Reset**: I portali (es. `DialogContent`, `PopoverContent`) resettano lo stack di contesto bg e l'opacita. `portal_config: HashMap<String, String>` in `ContextTracker`. Il valore `"reset"` mappa a `defaultBg`. I portali hanno priorita sui container in `on_tag_open`. L'opacita si resetta a 1.0 (non cumulativa con il parent).
+- Aggiornamento preset `shadcn`: da 21 container a 7 container + 15 portali. `ContainerConfig` ora include `portals: ReadonlyMap<string, string>`.
+- Nuovi campi: `ClassRegion.effectiveOpacity`, `ExtractOptions.portal_config`
 
 **Performance**:
 
@@ -116,7 +123,7 @@ resolve(light)    resolve(dark)   <-- risoluzione per-tema (DUE volte)
 - **Color parsing**: `csscolorparser` gestisce oklch nativamente (nessun workaround necessario, a differenza di quanto previsto nel piano)
 - **WCAG contrast**: Implementazione diretta della formula W3C con linearizzazione piecewise sRGB (`soglia 0.04045`)
 - **ClassExtractor come builder (non visitor)**: In TS, la costruzione di `ClassRegion` avviene dentro la state machine del parser. In Rust, il borrow checker impedisce a un visitor di accedere allo stato di altri visitor nella stessa slice `&mut [&mut dyn JsxVisitor]`. Soluzione: `ClassExtractor` e un **builder** con metodo `record()` che riceve il contesto gia estratto (bg, override, ignore) dall'orchestratore. Non implementa `JsxVisitor`.
-- **ScanOrchestrator** (`parser/mod.rs`): Possiede tutti i sub-componenti (ContextTracker, AnnotationParser, ClassExtractor, DisabledDetector, CurrentColorResolver) e coordina il flusso di stato tra di essi. Cattura `context_tracker.current_bg()` **prima** di `on_tag_open` per dare ai figli il bg del parent, non il proprio. Entry point pubblico: `scan_file()`.
+- **ScanOrchestrator** (`parser/mod.rs`): Possiede tutti i sub-componenti (ContextTracker, AnnotationParser, ClassExtractor, DisabledDetector, CurrentColorResolver) e coordina il flusso di stato tra di essi. Cattura `context_tracker.current_bg()` **prima** di `on_tag_open` per dare ai figli il bg del parent, non il proprio. Legge `effective_opacity` **dopo** `on_tag_open` per catturare l'opacita dell'elemento corrente. Entry point pubblico: `scan_file(source, container_config, portal_config, default_bg)`.
 - **DisabledDetector (US-07, native-only)**: Feature non presente nel parser TS. Rileva `disabled`, `disabled={true}`, `aria-disabled="true"` nelle tag JSX. Rileva anche il variant Tailwind `disabled:` nelle classi. Gli elementi disabilitati sono esclusi dal contrast checking (WCAG 2.1 SC 1.4.3 non si applica a componenti UI inattivi).
 - **CurrentColorResolver (US-08, native-only)**: Tracker LIFO delle classi `text-*` attraverso il nesting JSX. Quando un elemento ha `border-current` o `ring-current`, il resolver inietta la classe text-color del parent come colore effettivo. Nel TS, `currentColor` non viene risolto (segnalato come skipped).
 - **AnnotationParser**: Port di `getContextOverrideForLine()` e `getIgnoreReasonForLine()` da `categorizer.ts`. Usa semantica consume-once (`.take()`) per le annotazioni pending. Ignora `@a11y-context-block` (gestito da `ContextTracker`).
@@ -203,13 +210,14 @@ a11y-audit/
 │   │       ├── mod.rs            # ScanOrchestrator — combined visitor, scan_file() entry point
 │   │       ├── visitor.rs        # JsxVisitor trait (on_tag_open, on_tag_close, on_comment, on_class_attribute)
 │   │       ├── tokenizer.rs      # scan_jsx() — lexer JSX lossy, className extraction, cn()/clsx()/cva()
-│   │       ├── context_tracker.rs # ContextTracker — LIFO stack bg impliciti, @a11y-context-block
+│   │       ├── context_tracker.rs # ContextTracker — LIFO stack bg impliciti, @a11y-context-block, cumulative_opacity, portal_config
+│   │       ├── opacity.rs         # parse_opacity_class() — opacity-50, opacity-[0.3], opacity-[30%]
 │   │       ├── annotation_parser.rs # AnnotationParser — @a11y-context e a11y-ignore per-elemento
 │   │       ├── class_extractor.rs   # ClassExtractor — builder ClassRegion con inline style extraction
 │   │       ├── disabled_detector.rs # DisabledDetector — US-07 disabled/aria-disabled detection (native-only)
 │   │       └── current_color_resolver.rs # CurrentColorResolver — US-08 currentColor inheritance (native-only)
 │   ├── scripts/
-│   │   └── full_cross_validate.mts  # Cross-validation: 25 parser + 8 math fixtures (Rust vs TS)
+│   │   └── full_cross_validate.mts  # Cross-validation: 31 parser + 8 math fixtures (Rust vs TS)
 │   └── tests/
 │       └── fixtures/             # Ground truth JSON per cross-validation
 │           ├── colord_ratios.json    # 8 WCAG ratio pairs (da colord)
@@ -256,7 +264,7 @@ a11y-audit/
     │   │   ├── css-resolver.ts   # buildThemeColorMaps(), resolveClassToHex()
     │   │   ├── palette.ts        # extractTailwindPalette(), findTailwindPalette()
     │   │   ├── presets/
-    │   │   │   └── shadcn.ts     # 21 component->bg mappings (ContainerConfig)
+    │   │   │   └── shadcn.ts     # 7 container + 15 portal mappings (ContainerConfig)
     │   │   └── __tests__/
     │   │       ├── css-resolver.test.ts
     │   │       ├── css-resolver.io.test.ts
@@ -503,14 +511,20 @@ Prima che la pipeline inizi, la CLI carica la configurazione:
 
 1. **Tailwind palette discovery**: Se il config non specifica `tailwindPalette`, `findTailwindPalette(cwd)` cerca `node_modules/tailwindcss/theme.css` nella directory corrente. Supporta layout flat (`node_modules/`) e pnpm/yarn berry (risoluzione alternativa). Se non trovato, lancia un errore chiaro.
 
-2. **Container config merging**: Se `--preset shadcn` e specificato, carica `shadcnPreset` (21 componenti → sfondo implicito). Poi applica le `containers` dal config utente come override:
+2. **Container config merging**: Se `--preset shadcn` e specificato, carica `shadcnPreset` (7 container + 15 portali). Poi applica `containers` e `portals` dal config utente come override:
 
    ```
-   shadcnPreset.containers     (base: 21 entry)
+   shadcnPreset.containers     (base: 7 entry)
          +
    config.containers           (user overrides)
          =
-   final ContainerConfig       (merged Map)
+   final containers Map        (merged)
+
+   shadcnPreset.portals        (base: 15 entry)
+         +
+   config.portals              (user overrides)
+         =
+   final portals Map           (merged)
    ```
 
 ### Phase 0: Bootstrap — Costruzione delle Color Map
@@ -638,6 +652,8 @@ const auditConfigSchema = z.object({
   format:          z.enum(['markdown', 'json']).default('markdown'),
   dark:            z.boolean().default(true),
   containers:      z.record(z.string(), z.string()).default({}),
+  /** US-04: Portali → classe bg o "reset" (resetta a defaultBg) */
+  portals:         z.record(z.string(), z.string()).default({}),
   defaultBg:       z.string().default('bg-background'),
   pageBg:          z.object({
     light: z.string(),
@@ -657,6 +673,7 @@ const auditConfigSchema = z.object({
 | `format` | `'markdown' \| 'json'` | `'markdown'` | Formato report |
 | `dark` | `boolean` | `true` | Eseguire il pass dark mode |
 | `containers` | `Record<string, string>` | `{}` | Override container contexts (si sommano al preset) |
+| `portals` | `Record<string, string>` | `{}` | Mappatura portali: componente → classe bg o `"reset"` |
 | `defaultBg` | `string` | `'bg-background'` | Classe sfondo globale di default |
 | `pageBg` | `{ light, dark }` | `{ '#ffffff', '#09090b' }` | Sfondo pagina per alpha compositing |
 | `preset` | `string?` | — | Nome preset da caricare (es. `'shadcn'`) |
@@ -664,7 +681,7 @@ const auditConfigSchema = z.object({
 
 ### Preset: come funzionano
 
-Un preset e un oggetto `ContainerConfig` predefinito che mappa nomi di componenti al loro sfondo implicito. Attualmente esiste un unico preset: **`shadcn`**.
+Un preset e un oggetto `ContainerConfig` predefinito che mappa nomi di componenti al loro sfondo implicito e portali al loro comportamento di reset. Attualmente esiste un unico preset: **`shadcn`** (7 container + 15 portali).
 
 ```typescript
 // src/plugins/tailwind/presets/shadcn.ts
@@ -674,10 +691,16 @@ export const shadcnPreset: ContainerConfig = {
     ['CardHeader', 'bg-card'],
     ['CardContent', 'bg-card'],
     ['CardFooter', 'bg-card'],
-    ['DialogContent', 'bg-background'],
-    ['SheetContent', 'bg-background'],
-    ['DrawerContent', 'bg-background'],
-    ['AlertDialogContent', 'bg-background'],
+    ['AccordionItem', 'bg-background'],
+    ['TabsContent', 'bg-background'],
+    ['Alert', 'bg-background'],
+  ]),
+  portals: new Map([
+    ['DialogOverlay', 'bg-black/80'],
+    ['DialogContent', 'reset'],
+    ['SheetContent', 'reset'],
+    ['DrawerContent', 'reset'],
+    ['AlertDialogContent', 'reset'],
     ['PopoverContent', 'bg-popover'],
     ['DropdownMenuContent', 'bg-popover'],
     ['DropdownMenuSubContent', 'bg-popover'],
@@ -688,9 +711,6 @@ export const shadcnPreset: ContainerConfig = {
     ['Command', 'bg-popover'],
     ['TooltipContent', 'bg-popover'],
     ['HoverCardContent', 'bg-popover'],
-    ['AccordionItem', 'bg-background'],
-    ['TabsContent', 'bg-background'],
-    ['Alert', 'bg-background'],
   ]),
   defaultBg: 'bg-background',
   pageBg: { light: '#ffffff', dark: '#09090b' },
@@ -721,6 +741,8 @@ export default {
 interface ContainerConfig {
   /** Component name → default bg class (es. "Card" → "bg-card") */
   readonly containers: ReadonlyMap<string, string>;
+  /** US-04: Portali → classe bg o "reset". Resettano context stack + opacity al boundary. */
+  readonly portals: ReadonlyMap<string, string>;
   /** Default page background class (es. "bg-background") */
   readonly defaultBg: string;
   /** Page background hex per theme (per alpha compositing) */
@@ -916,6 +938,48 @@ Il pop avviene solo se il nome del tag chiuso corrisponde al `component` in cima
 **Override esplicito**: Se un container ha un `bg-*` esplicito nelle sue props (`<Card className="bg-white">`), `findExplicitBgInTag()` scansiona gli attributi del tag e usa quel colore al posto del default.
 
 **Self-closing**: `isSelfClosingTag()` distingue `<Card />` (nessun push) da `<Card>...</Card>` (push + pop). Rispetta `{}` e stringhe dentro le props per evitare falsi positivi su `>` nelle espressioni.
+
+#### 6.7.1 Portal Context Reset (US-04)
+
+I portali (React Portals, dialog, popover) resettano completamente lo stack di contesto. A differenza dei container normali che ereditano e sovrascrivono, i portali iniziano un nuovo contesto con `defaultBg` e opacita 1.0.
+
+```
+<Card>                 push { bg: 'bg-card', opacity: 1.0 }
+  <div opacity-50>     push { bg: 'bg-card', opacity: 0.5 }
+    <DialogContent>    ← PORTAL: reset → push { bg: 'bg-background', opacity: 1.0 }
+      <p className=    currentContext() → 'bg-background', opacity 1.0
+    </DialogContent>   pop
+  </div>               pop
+</Card>                pop
+```
+
+Il valore `"reset"` in `portalConfig` mappa a `defaultBg`. Se il portale ha un bg esplicito (es. `DialogOverlay` → `bg-black/80`), quel valore viene usato al posto di `defaultBg`.
+
+**Priorita**: Il check portale avviene **prima** del check container in `on_tag_open`. Se un componente appare in entrambe le mappe, la semantica di portale vince (reset instead of inherit).
+
+#### 6.7.2 Opacity Stack (US-05)
+
+L'opacita CSS si moltiplica attraverso i livelli di annidamento. Un elemento con `opacity-50` dentro un container con `opacity-50` ha un'opacita effettiva di `0.25` (0.5 * 0.5).
+
+```
+<div opacity-50>       push { opacity: 0.5 }
+  <div opacity-50>     push { opacity: 0.25 (0.5 * 0.5) }
+    <span className=   effectiveOpacity = 0.25
+  </div>               pop
+</div>                 pop
+```
+
+**Parsing classi**: `parse_opacity_class()` in `opacity.rs` riconosce:
+
+- `opacity-50` → 0.5 (valore/100)
+- `opacity-100` → 1.0
+- `opacity-0` → 0.0
+- `opacity-[0.37]` → 0.37 (valore arbitrario)
+- `opacity-[30%]` → 0.3 (percentuale)
+
+**Soglia di visibilita**: Elementi con opacita cumulativa < 10% (`cumulative_opacity < 0.10`) sono marcati come `ignored` con reason `"Near-invisible element (opacity: X%)"`. Non vengono verificati per contrasto poiche visivamente irrilevanti.
+
+**Alpha reduction**: Nel resolution (TS), `effectiveOpacity` viene applicato come `bgAlpha` e `textAlpha` sulle `ColorPair`, riducendo l'alpha per il compositing. Un elemento con `effectiveOpacity: 0.5` avra i colori bg e fg semi-trasparenti, risultando in un contrasto ridotto rispetto allo sfondo pagina.
 
 ### 6.8 Risoluzione classe → hex (`resolveClassToHex`)
 
@@ -1194,6 +1258,8 @@ interface ClassRegion {
     backgroundColor?: string
   }
   contextOverride?: ContextOverride  // Override da @a11y-context annotation
+  /** US-05: Opacita cumulativa dai container ancestors (0.0-1.0). undefined = completamente opaco. */
+  effectiveOpacity?: number
 }
 ```
 
@@ -1373,7 +1439,7 @@ Se Tailwind aggiunge nuove utility con prefisso ambiguo e il report mostra "Unre
 
 ## 9. Testing
 
-### Struttura (~400 test TS across 18 file + 223 test Rust across 13 moduli)
+### Struttura (~450 test TS across 24 file + 287 test Rust across 14 moduli)
 
 Il test suite e organizzato in quattro livelli (TS) piu i test Rust:
 
@@ -1410,7 +1476,7 @@ src/plugins/jsx/__tests__/
   region-resolver.io.test.ts           # extractAllFileRegions con vi.mock('node:fs', 'glob')
 ```
 
-**Test Rust** (223 test, `cargo test` dalla directory `native/`):
+**Test Rust** (287 test, `cargo test` dalla directory `native/`):
 
 ```text
 native/src/math/
@@ -1423,20 +1489,21 @@ native/src/math/
 
 native/src/parser/
   tokenizer.rs      # 24 test: scan_jsx (tags, self-closing, comments, className, cn()/clsx()/cva())
-  context_tracker.rs # 17 test: ContextTracker (container push/pop, annotations, explicit bg, variants)
+  context_tracker.rs # 37 test: push/pop, annotations, explicit bg, variants, cumulative_opacity, portal_config
   annotation_parser.rs # 14 test: @a11y-context parsing, a11y-ignore, pending consume-once, block skip
   class_extractor.rs   # 19 test: ClassRegion building, context overrides, inline style extraction
   disabled_detector.rs # 20 test: disabled/aria-disabled detection, disabled: variant, false negatives
   current_color_resolver.rs # 17 test: currentColor LIFO stack, text-* inheritance, border-current resolution
-  mod.rs (ScanOrchestrator) # 50 test: full orchestration, multi-visitor coordination, scan_file() integration
+  opacity.rs         # 10 test: parse_opacity_class (numeric, arbitrary, percentage, invalid, edge cases)
+  mod.rs (ScanOrchestrator) # 56 test: full orchestration, opacity, portal integration
 
 native/src/
-  engine.rs         # 6 test: extract_and_scan (single file, multi-file parallel, containers, stress test)
+  engine.rs         # 8 test: extract_and_scan (single, multi-file, containers, portals, stress test)
 ```
 
 I test Rust usano un approccio **cross-validation**: i valori ground truth sono generati dalle librerie TS (`colord`, `apca-w3`, `culori`) e salvati come fixture JSON in `native/tests/fixtures/`. I test Rust verificano che l'output corrisponda entro tolleranze definite (±1 per canale RGB, ±1.0 per APCA Lc).
 
-**Cross-validation end-to-end** (`native/scripts/full_cross_validate.mts`): Oltre ai test unitari Rust, uno script TypeScript esegue 25 fixture JSX attraverso entrambi gli engine (Rust `extractAndScan()` e TS `extractClassRegions()`) e confronta i risultati. Copre className statici, cn()/clsx(), template literal, container context, annotazioni @a11y-context, fragment, varianti, elementi disabilitati. 3 fixture mostrano miglioramenti intenzionali del native engine (propagazione bg esplicito dai parent tag). Lo script include anche 8 test di parita matematica (WCAG contrast ratio ±0.05, APCA Lc ±2.0).
+**Cross-validation end-to-end** (`native/scripts/full_cross_validate.mts`): Oltre ai test unitari Rust, uno script TypeScript esegue 31 fixture JSX attraverso entrambi gli engine (Rust `extractAndScan()` e TS `extractClassRegions()`) e confronta i risultati. Copre className statici, cn()/clsx(), template literal, container context, annotazioni @a11y-context, fragment, varianti, elementi disabilitati, opacity stack, portal context reset. 3 fixture mostrano miglioramenti intenzionali del native engine (propagazione bg esplicito dai parent tag). 3 opacity fixture mostrano valori effectiveOpacity nativi, 3 portal fixture sono native-only improvements (TS legacy parser non supporta portali). Lo script include anche 8 test di parita matematica (WCAG contrast ratio ±0.05, APCA Lc ±2.0).
 
 ### Convenzioni
 
@@ -1456,14 +1523,14 @@ npx vitest run -t "compositeOver"                            # singolo test per 
 npm run typecheck         # tsc --noEmit (strict mode)
 
 # Rust native engine
-cd native && cargo test                    # tutti i 223 test Rust
+cd native && cargo test                    # tutti i 287 test Rust
 cd native && cargo test math::apca         # singolo modulo math
 cd native && cargo test parser::tokenizer  # singolo modulo parser
 cd native && cargo build                   # debug build → target/debug/
 npm run build:native                       # release build → *.node
 
 # Cross-validation e benchmark
-npx tsx native/scripts/full_cross_validate.mts   # 25 parser + 8 math cross-validation
+npx tsx native/scripts/full_cross_validate.mts   # 31 parser + 8 math cross-validation
 npx tsx scripts/benchmark.mts --files=500        # performance benchmark (native vs legacy)
 ```
 
@@ -1480,8 +1547,8 @@ npx tsx scripts/benchmark.mts --files=500        # performance benchmark (native
 | Ternari cross-branch | `cond ? 'bg-A text-A' : 'bg-B text-B'` → audit vede bg-A+text-B | Falsi positivi | `// a11y-ignore: mutually exclusive ternary` |
 | cva cross-variant | cva estrae tutti i letterali da tutte le varianti | Falsi positivi | `// a11y-ignore: cross-variant cva` |
 | Posizionamento assoluto/fixed | DOM nesting ≠ visual nesting | Falsi positivi/negativi per elementi sovrapposti | `// @a11y-context bg:<sfondo-reale>` |
-| React Portals | Portal renderizza fuori dal parent DOM | Sfondo inferito errato | `// @a11y-context bg:<sfondo-reale>` |
-| Trasparenze impilate | Compositing solo contro il container piu vicino | Hex leggermente diverso dal reale | Impatto trascurabile in pratica |
+| React Portals | Portal renderizza fuori dal parent DOM | ~~Sfondo inferito errato~~ Supportato nativamente (US-04) | Configurare portali nel preset o config `portals`. TS legacy: `// @a11y-context bg:<sfondo-reale>` |
+| Trasparenze impilate | ~~Compositing solo contro il container piu vicino~~ Opacita cumulativa tracciata (US-05) | Riduzione alpha precisa attraverso livelli annidati | Soglia visibilita 10%: sotto questa soglia, elementi ignorati |
 | `1rem = 16px` hardcoded | ALWAYS_LARGE/LARGE_IF_BOLD usano pixel statici | Se root font-size cambia, soglie imprecise | `rootFontSizePx` e disponibile per futura integrazione |
 
 ### Precisione Numerica
@@ -1646,13 +1713,17 @@ A: Si. Usa `// @a11y-context bg:#09090b fg:text-white`. L'override `fg:` sostitu
 | **ContextOverride** | Override di contesto da annotazione `@a11y-context` o `@a11y-context-block`. Contiene bg?, fg?, noInherit? |
 | **`@a11y-context`** | Annotazione comment-based che sovrascrive il contesto bg/fg per un singolo elemento |
 | **`@a11y-context-block`** | Annotazione comment-based che sovrascrive il contesto bg per tutti i figli di un blocco (push sul context stack) |
-| **Preset** | Set predefinito di container contexts (es. `shadcn` = 21 componenti) |
+| **Preset** | Set predefinito di container contexts e portali (es. `shadcn` = 7 container + 15 portali) |
 | **Pipeline** | Sequenza di 5 fasi: config → bootstrap → extract → resolve → report |
-| **Native Engine** | Modulo Rust compilato via NAPI-RS che sostituisce gli hot path TS (math + parser). Phase 1 completa: ~1.7x speedup |
+| **Native Engine** | Modulo Rust compilato via NAPI-RS che sostituisce gli hot path TS (math + parser). Phase 1 completa (~1.7x speedup), Phase 3 completa (opacity stack + portal context reset) |
 | **NAPI-RS** | Framework per esporre funzioni Rust a Node.js tramite N-API. `#[napi]` per funzioni, `#[napi(object)]` per struct |
 | **ScanOrchestrator** | Componente centrale del parser Rust che possiede tutti i sub-visitor e coordina il flusso di stato tra ContextTracker, AnnotationParser, ClassExtractor, DisabledDetector, e CurrentColorResolver |
 | **CurrentColorResolver** | Tracker LIFO (US-08, native-only) delle classi `text-*` attraverso il nesting JSX per risolvere `border-current`/`ring-current` |
 | **DisabledDetector** | Detector (US-07, native-only) di elementi UI disabilitati (`disabled`, `aria-disabled`, `disabled:` variant) esclusi dal contrast checking |
 | **Black soft clamp** | Operazione APCA che aggiunge luminanza ai colori molto scuri (`Y < 0.022`) per evitare artefatti nel calcolo Lc |
-| **Cross-validation** | Approccio di test: ground truth generati dalle librerie TS, verificati contro l'implementazione Rust. Include sia fixture JSON unitarie che script end-to-end (25 parser + 8 math) |
+| **Cross-validation** | Approccio di test: ground truth generati dalle librerie TS, verificati contro l'implementazione Rust. Include sia fixture JSON unitarie che script end-to-end (31 parser + 8 math) |
 | **Rayon** | Crate Rust per data-parallelismo CPU. Usato in `engine.rs` per parsare file in parallelo via `par_iter()` |
+| **Portal** | Componente React che renderizza fuori dal parent DOM. Nel parser Rust, i portali resettano lo stack di contesto bg e l'opacita cumulativa. Configurati in `portalConfig` |
+| **Opacity Stack** | Tracciamento dell'opacita cumulativa attraverso container annidati. `opacity-50` dentro `opacity-50` = opacita effettiva 0.25. Elementi con opacita < 10% sono ignorati |
+| **effectiveOpacity** | Campo su `ClassRegion` e `ColorPair` che rappresenta l'opacita cumulativa dagli ancestor. Applicato come `bgAlpha` e `textAlpha` durante il resolution |
+| **Visibility Threshold** | Soglia del 10% di opacita cumulativa sotto la quale un elemento e marcato come `ignored` con reason "Near-invisible element" |
