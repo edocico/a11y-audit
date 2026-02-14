@@ -7,3 +7,5 @@ a11y-reports/
 .worktrees/
 native/target/
 *.node
+firebase-debug.log
+.claude/settings.local.json
