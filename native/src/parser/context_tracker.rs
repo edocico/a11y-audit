@@ -55,11 +55,11 @@ impl ContextTracker {
             .map(|e| e.bg_class.as_str())
             .unwrap_or(&self.default_bg)
     }
-}
 
-impl JsxVisitor for ContextTracker {
-    fn on_tag_open(&mut self, tag_name: &str, is_self_closing: bool, raw_tag: &str) {
-        // Handle pending @a11y-context-block: push annotation on next non-self-closing tag
+    /// Resolve any pending @a11y-context-block annotation by pushing it onto the stack.
+    /// Call this BEFORE capturing pre_tag_open_bg in the orchestrator, so that
+    /// block annotations count as parent context (not as the tag's own bg).
+    pub fn resolve_pending_block(&mut self, tag_name: &str, is_self_closing: bool) {
         if let Some(bg) = self.pending_block_override.take() {
             if !is_self_closing {
                 self.stack.push(StackEntry {
@@ -69,6 +69,14 @@ impl JsxVisitor for ContextTracker {
                 });
             }
         }
+    }
+}
+
+impl JsxVisitor for ContextTracker {
+    fn on_tag_open(&mut self, tag_name: &str, is_self_closing: bool, raw_tag: &str) {
+        // NOTE: pending @a11y-context-block is handled by resolve_pending_block(),
+        // called by the orchestrator BEFORE this method. When used standalone
+        // (without orchestrator), call resolve_pending_block manually first.
 
         if is_self_closing {
             return;
@@ -246,6 +254,8 @@ mod tests {
     fn annotation_block_pushes() {
         let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
         tracker.on_comment(" @a11y-context-block bg:bg-slate-900", 1);
+        // resolve_pending_block must be called before on_tag_open (orchestrator does this)
+        tracker.resolve_pending_block("div", false);
         tracker.on_tag_open("div", false, "<div>");
         assert_eq!(tracker.current_bg(), "bg-slate-900");
         tracker.on_tag_close("div");
@@ -256,9 +266,9 @@ mod tests {
     fn annotation_block_self_closing_no_push() {
         let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
         tracker.on_comment(" @a11y-context-block bg:bg-slate-900", 1);
+        tracker.resolve_pending_block("br", true);
         tracker.on_tag_open("br", true, "<br />");
-        // Self-closing tag should not consume the block annotation...
-        // Actually, the TS code does consume it. Let's match behavior.
+        // Self-closing tag should not consume the block annotation
         assert_eq!(tracker.current_bg(), "bg-background");
     }
 
