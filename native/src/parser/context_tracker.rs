@@ -36,6 +36,7 @@ struct StackEntry {
     bg_class: String,
     #[allow(dead_code)]
     is_annotation: bool,
+    cumulative_opacity: f32,
 }
 
 impl ContextTracker {
@@ -56,6 +57,14 @@ impl ContextTracker {
             .unwrap_or(&self.default_bg)
     }
 
+    /// Get the current cumulative opacity (top of stack or 1.0 if empty).
+    pub fn current_opacity(&self) -> f32 {
+        self.stack
+            .last()
+            .map(|e| e.cumulative_opacity)
+            .unwrap_or(1.0)
+    }
+
     /// Resolve any pending @a11y-context-block annotation by pushing it onto the stack.
     /// Call this BEFORE capturing pre_tag_open_bg in the orchestrator, so that
     /// block annotations count as parent context (not as the tag's own bg).
@@ -66,6 +75,7 @@ impl ContextTracker {
                     tag: format!("_annotation_{}", tag_name),
                     bg_class: bg,
                     is_annotation: true,
+                    cumulative_opacity: self.current_opacity(),
                 });
             }
         }
@@ -82,6 +92,11 @@ impl JsxVisitor for ContextTracker {
             return;
         }
 
+        // Detect opacity-* class in the raw tag (US-05)
+        let opacity = super::opacity::find_opacity_in_raw_tag(raw_tag);
+        let parent_opacity = self.current_opacity();
+        let cumulative = parent_opacity * opacity.unwrap_or(1.0);
+
         // Check if this is a configured container component
         if let Some(config_bg) = self.container_config.get(tag_name).cloned() {
             // Check for explicit bg-* class in the tag that overrides the config
@@ -91,6 +106,7 @@ impl JsxVisitor for ContextTracker {
                 tag: tag_name.to_string(),
                 bg_class: bg,
                 is_annotation: false,
+                cumulative_opacity: cumulative,
             });
             return;
         }
@@ -101,6 +117,19 @@ impl JsxVisitor for ContextTracker {
                 tag: tag_name.to_string(),
                 bg_class: bg,
                 is_annotation: false,
+                cumulative_opacity: cumulative,
+            });
+            return;
+        }
+
+        // Opacity-only tag: no container config, no explicit bg-*
+        // Push an entry that inherits the parent's bg but tracks cumulative opacity
+        if opacity.is_some() {
+            self.stack.push(StackEntry {
+                tag: tag_name.to_string(),
+                bg_class: self.current_bg().to_string(),
+                is_annotation: false,
+                cumulative_opacity: cumulative,
             });
         }
     }
@@ -349,5 +378,85 @@ mod tests {
             find_explicit_bg_in_raw_tag(r#"<div className="dark:bg-red-500">"#),
             None
         );
+    }
+
+    // ── Opacity tracking (US-05) ──
+
+    #[test]
+    fn default_opacity_is_one() {
+        let tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        assert_eq!(tracker.current_opacity(), 1.0);
+    }
+
+    #[test]
+    fn opacity_class_pushes_entry() {
+        let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        tracker.on_tag_open("div", false, r##"<div className="opacity-50">"##);
+        assert_eq!(tracker.current_opacity(), 0.5);
+    }
+
+    #[test]
+    fn opacity_pops_on_close() {
+        let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        tracker.on_tag_open("div", false, r##"<div className="opacity-50">"##);
+        tracker.on_tag_close("div");
+        assert_eq!(tracker.current_opacity(), 1.0);
+    }
+
+    #[test]
+    fn nested_opacity_multiplies() {
+        let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        tracker.on_tag_open("div", false, r##"<div className="opacity-50">"##);
+        tracker.on_tag_open("span", false, r##"<span className="opacity-50">"##);
+        assert!((tracker.current_opacity() - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn nested_opacity_restores() {
+        let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        tracker.on_tag_open("div", false, r##"<div className="opacity-50">"##);
+        tracker.on_tag_open("span", false, r##"<span className="opacity-75">"##);
+        assert!((tracker.current_opacity() - 0.375).abs() < 0.001);
+        tracker.on_tag_close("span");
+        assert_eq!(tracker.current_opacity(), 0.5);
+    }
+
+    #[test]
+    fn container_with_opacity() {
+        let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        tracker.on_tag_open("Card", false, r##"<Card className="opacity-75">"##);
+        assert_eq!(tracker.current_bg(), "bg-card");
+        assert_eq!(tracker.current_opacity(), 0.75);
+    }
+
+    #[test]
+    fn self_closing_opacity_no_push() {
+        let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        tracker.on_tag_open("img", true, r##"<img className="opacity-50" />"##);
+        assert_eq!(tracker.current_opacity(), 1.0);
+    }
+
+    #[test]
+    fn opacity_arbitrary_value() {
+        let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        tracker.on_tag_open("div", false, r##"<div className="opacity-[.33]">"##);
+        assert!((tracker.current_opacity() - 0.33).abs() < 0.001);
+    }
+
+    #[test]
+    fn opacity_zero_tracked() {
+        let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        tracker.on_tag_open("div", false, r##"<div className="opacity-0">"##);
+        assert_eq!(tracker.current_opacity(), 0.0);
+    }
+
+    #[test]
+    fn opacity_only_inherits_bg() {
+        // When opacity-only tag is pushed, bg should be inherited from parent
+        let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        tracker.on_tag_open("Card", false, "<Card>");
+        tracker.on_tag_open("div", false, r##"<div className="opacity-50">"##);
+        assert_eq!(tracker.current_bg(), "bg-card"); // inherited from Card
+        assert_eq!(tracker.current_opacity(), 0.5);
     }
 }
