@@ -17,6 +17,11 @@ use current_color_resolver::CurrentColorResolver;
 use disabled_detector::{is_disabled_tag, has_disabled_variant};
 use visitor::JsxVisitor;
 
+/// Elements below this cumulative opacity threshold are considered invisible
+/// and excluded from contrast checking. WCAG does not require contrast for
+/// content that is not perceivable.
+const OPACITY_VISIBILITY_THRESHOLD: f32 = 0.1;
+
 /// Combined orchestrator that owns all parser sub-components and coordinates
 /// cross-visitor state flow during JSX scanning.
 ///
@@ -101,7 +106,20 @@ impl JsxVisitor for ScanOrchestrator {
         // 4. US-05: Get cumulative opacity (element's own, captured AFTER on_tag_open)
         let effective_opacity = Some(self.context_tracker.current_opacity());
 
-        // 5. Build ClassRegion via ClassExtractor
+        // 5. US-05: Visibility threshold — mark invisible elements as ignored
+        let final_ignore_reason = if final_ignore_reason.is_none()
+            && effective_opacity.map_or(false, |o| o < OPACITY_VISIBILITY_THRESHOLD)
+        {
+            Some(format!(
+                "invisible (effective opacity {:.0}% < {}% threshold)",
+                effective_opacity.unwrap() * 100.0,
+                (OPACITY_VISIBILITY_THRESHOLD * 100.0) as u32,
+            ))
+        } else {
+            final_ignore_reason
+        };
+
+        // 6. Build ClassRegion via ClassExtractor
         self.class_extractor.record(
             value,
             line,
@@ -524,5 +542,41 @@ mod integration_tests {
         // span inside: inherits Card's opacity
         assert_eq!(regions[1].effective_opacity, Some(0.75));
         assert_eq!(regions[1].context_bg, "bg-card"); // Card's bg
+    }
+
+    // ── Visibility threshold (US-05) ──
+
+    #[test]
+    fn invisible_element_marked_ignored() {
+        let source = r##"<div className="opacity-0">
+    <span className="text-white">invisible</span>
+</div>"##;
+        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        // span inside opacity-0 container is invisible
+        let span = regions.iter().find(|r| r.content == "text-white").unwrap();
+        assert_eq!(span.ignored, Some(true));
+        assert!(span.ignore_reason.as_ref().unwrap().contains("opacity"));
+    }
+
+    #[test]
+    fn nearly_invisible_marked_ignored() {
+        let source = r##"<div className="opacity-5">
+    <span className="text-white">barely visible</span>
+</div>"##;
+        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let span = regions.iter().find(|r| r.content == "text-white").unwrap();
+        assert_eq!(span.ignored, Some(true));
+        assert!(span.ignore_reason.as_ref().unwrap().contains("opacity"));
+    }
+
+    #[test]
+    fn visible_not_marked_ignored() {
+        let source = r##"<div className="opacity-50">
+    <span className="text-white">visible</span>
+</div>"##;
+        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let span = regions.iter().find(|r| r.content == "text-white").unwrap();
+        // 0.5 >= 0.1 threshold -> not invisible
+        assert_ne!(span.ignored, Some(true));
     }
 }
