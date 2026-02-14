@@ -4,6 +4,7 @@ extern crate napi_derive;
 pub mod types;
 pub mod math;
 pub mod parser;
+pub mod engine;
 
 #[napi]
 pub fn health_check() -> String {
