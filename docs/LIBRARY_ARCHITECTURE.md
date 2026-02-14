@@ -1,6 +1,6 @@
 # Architettura Tecnica: a11y-audit Library (v1.0)
 
-> **Ultimo aggiornamento**: 2026-02-14 | **Versione**: 1.0.0 (standalone npm package) | **384 test TS across 16 files + 41 test Rust across 5 moduli**
+> **Ultimo aggiornamento**: 2026-02-14 | **Versione**: 1.0.0 (standalone npm package) | **384 test TS across 16 files + 150 test Rust across 11 moduli**
 
 ---
 
@@ -75,8 +75,8 @@ resolve(light)    resolve(dark)   <-- risoluzione per-tema (DUE volte)
 
 | Componente | Linguaggio | Scopo |
 | ---------- | ---------- | ----- |
-| **Math engine** (hex, composite, wcag, apca, color_parse) | Rust | Calcoli puri: parsing colori, compositing alpha, contrast ratio WCAG, APCA Lc |
-| **Parser** (tokenizer, visitors) | Rust (planned) | State machine JSX, context stack, annotation parsing |
+| **Math engine** (hex, composite, wcag, apca, color_parse, checker) | Rust | Calcoli puri: parsing colori, compositing alpha, contrast ratio WCAG, APCA Lc, full contrast pipeline |
+| **Parser** (tokenizer, visitor, context_tracker, annotation_parser, class_extractor, disabled_detector) | Rust | Lexer JSX lossy con visitor pattern, context stack per background impliciti, annotation parsing, class region building, disabled element detection |
 | **Pipeline orchestration** | TypeScript | I/O disco, config loading, report generation |
 | **NAPI bridge** | Rust + JS | Conversione tipi Rust ↔ JS via `#[napi(object)]` |
 
@@ -88,18 +88,22 @@ resolve(light)    resolve(dark)   <-- risoluzione per-tema (DUE volte)
 | `serde` + `serde_json` | 1.x | Serializzazione tipi per interop JS |
 | `csscolorparser` | 0.7 | Parsing CSS colors (oklch, hsl, rgb, named) — equivalente Rust di `culori` |
 
-**Stato attuale (Task 1-6 di 20 completati)**:
+**Stato attuale (Task 1-12 di 20 completati)**:
 
 - Infrastruttura NAPI-RS funzionante con `health_check()` esposto
 - Tipi condivisi Rust equivalenti a `src/core/types.ts` con campi pre-wired per feature future (US-05, US-07, US-08, Phase 5)
-- 5 moduli math completi: `hex`, `composite`, `wcag`, `apca`, `color_parse`
-- 41 test Rust passanti, cross-validati contro i ground truth generati dalle librerie TS (colord, apca-w3, culori)
+- 6 moduli math completi: `hex`, `composite`, `wcag`, `apca`, `color_parse`, `checker`
+- 6 moduli parser completi: `visitor` (trait), `tokenizer` (lexer JSX lossy), `context_tracker` (stack contesto bg), `annotation_parser` (annotazioni per-elemento), `class_extractor` (builder ClassRegion), `disabled_detector` (US-07, native-only)
+- 150 test Rust passanti, cross-validati contro i ground truth generati dalle librerie TS (colord, apca-w3, culori)
 
 **Differenze implementative rispetto al layer TS**:
 
 - **APCA**: Usa `pow(c/255, 2.4)` (curva semplice), NON la funzione piecewise WCAG. Include il **black soft clamp** (`blkThrs=0.022`, `blkClmp=1.414`) essenziale per accuratezza su colori scuri
 - **Color parsing**: `csscolorparser` gestisce oklch nativamente (nessun workaround necessario, a differenza di quanto previsto nel piano)
 - **WCAG contrast**: Implementazione diretta della formula W3C con linearizzazione piecewise sRGB (`soglia 0.04045`)
+- **ClassExtractor come builder (non visitor)**: In TS, la costruzione di `ClassRegion` avviene dentro la state machine del parser. In Rust, il borrow checker impedisce a un visitor di accedere allo stato di altri visitor nella stessa slice `&mut [&mut dyn JsxVisitor]`. Soluzione: `ClassExtractor` e un **builder** con metodo `record()` che riceve il contesto gia estratto (bg, override, ignore) dall'orchestratore (Task 14). Non implementa `JsxVisitor`.
+- **DisabledDetector (US-07, native-only)**: Feature non presente nel parser TS. Rileva `disabled`, `disabled={true}`, `aria-disabled="true"` nelle tag JSX. Rileva anche il variant Tailwind `disabled:` nelle classi. Gli elementi disabilitati sono esclusi dal contrast checking (WCAG 2.1 SC 1.4.3 non si applica a componenti UI inattivi).
+- **AnnotationParser**: Port di `getContextOverrideForLine()` e `getIgnoreReasonForLine()` da `categorizer.ts`. Usa semantica consume-once (`.take()`) per le annotazioni pending. Ignora `@a11y-context-block` (gestito da `ContextTracker`).
 
 ### Architettura a Strati (Layered Onion)
 
@@ -161,13 +165,22 @@ a11y-audit/
 │   ├── src/
 │   │   ├── lib.rs                # Root: health_check(), mod declarations
 │   │   ├── types.rs              # Rust equivalents of core/types.ts (#[napi(object)])
-│   │   └── math/
+│   │   ├── math/
+│   │   │   ├── mod.rs            # Module declarations
+│   │   │   ├── hex.rs            # parse_hex_rgb(), extract_hex_alpha(), strip_hex_alpha()
+│   │   │   ├── composite.rs      # composite_over() — Porter-Duff source-over
+│   │   │   ├── wcag.rs           # srgb_to_linear(), relative_luminance(), contrast_ratio()
+│   │   │   ├── apca.rs           # calc_apca_lc() — APCA-W3 con black soft clamp
+│   │   │   ├── color_parse.rs    # to_hex() — CSS color → hex via csscolorparser
+│   │   │   └── checker.rs        # check_contrast(), check_all_pairs() — pipeline completa
+│   │   └── parser/
 │   │       ├── mod.rs            # Module declarations
-│   │       ├── hex.rs            # parse_hex_rgb(), extract_hex_alpha(), strip_hex_alpha()
-│   │       ├── composite.rs      # composite_over() — Porter-Duff source-over
-│   │       ├── wcag.rs           # srgb_to_linear(), relative_luminance(), contrast_ratio()
-│   │       ├── apca.rs           # calc_apca_lc() — APCA-W3 con black soft clamp
-│   │       └── color_parse.rs    # to_hex() — CSS color → hex via csscolorparser
+│   │       ├── visitor.rs        # JsxVisitor trait (on_tag_open, on_tag_close, on_comment, on_class_attribute)
+│   │       ├── tokenizer.rs      # scan_jsx() — lexer JSX lossy, className extraction, cn()/clsx()/cva()
+│   │       ├── context_tracker.rs # ContextTracker — LIFO stack bg impliciti, @a11y-context-block
+│   │       ├── annotation_parser.rs # AnnotationParser — @a11y-context e a11y-ignore per-elemento
+│   │       ├── class_extractor.rs   # ClassExtractor — builder ClassRegion con inline style extraction
+│   │       └── disabled_detector.rs # DisabledDetector — US-07 disabled/aria-disabled detection (native-only)
 │   └── tests/
 │       └── fixtures/             # Ground truth JSON per cross-validation
 │           ├── colord_ratios.json    # 8 WCAG ratio pairs (da colord)
@@ -1229,7 +1242,7 @@ Se Tailwind aggiunge nuove utility con prefisso ambiguo e il report mostra "Unre
 
 ## 9. Testing
 
-### Struttura (384 test TS across 16 file + 41 test Rust across 5 moduli)
+### Struttura (384 test TS across 16 file + 150 test Rust across 11 moduli)
 
 Il test suite e organizzato in quattro livelli (TS) piu i test Rust:
 
@@ -1266,7 +1279,7 @@ src/plugins/jsx/__tests__/
   region-resolver.io.test.ts           # extractAllFileRegions con vi.mock('node:fs', 'glob')
 ```
 
-**Test Rust** (41 test, `cargo test` dalla directory `native/`):
+**Test Rust** (150 test, `cargo test` dalla directory `native/`):
 
 ```text
 native/src/math/
@@ -1275,6 +1288,14 @@ native/src/math/
   wcag.rs           # 11 test: luminance, contrast ratio, thresholds (cross-validated vs colord)
   apca.rs           # 6 test: calc_apca_lc (cross-validated vs apca-w3, ±1.0 Lc tolerance)
   color_parse.rs    # 12 test: to_hex (hex, rgb, hsl, oklch, named, transparent, inherit)
+  checker.rs        # 15 test: check_contrast, check_all_pairs (compositing, disabled, thresholds)
+
+native/src/parser/
+  tokenizer.rs      # 24 test: scan_jsx (tags, self-closing, comments, className, cn()/clsx()/cva())
+  context_tracker.rs # 17 test: ContextTracker (container push/pop, annotations, explicit bg, variants)
+  annotation_parser.rs # 14 test: @a11y-context parsing, a11y-ignore, pending consume-once, block skip
+  class_extractor.rs   # 19 test: ClassRegion building, context overrides, inline style extraction
+  disabled_detector.rs # 20 test: disabled/aria-disabled detection, disabled: variant, false negatives
 ```
 
 I test Rust usano un approccio **cross-validation**: i valori ground truth sono generati dalle librerie TS (`colord`, `apca-w3`, `culori`) e salvati come fixture JSON in `native/tests/fixtures/`. I test Rust verificano che l'output corrisponda entro tolleranze definite (±1 per canale RGB, ±1.0 per APCA Lc).
@@ -1297,8 +1318,9 @@ npx vitest run -t "compositeOver"                            # singolo test per 
 npm run typecheck         # tsc --noEmit (strict mode)
 
 # Rust native engine
-cd native && cargo test                    # tutti i 41 test Rust
-cd native && cargo test math::apca         # singolo modulo
+cd native && cargo test                    # tutti i 150 test Rust
+cd native && cargo test math::apca         # singolo modulo math
+cd native && cargo test parser::tokenizer  # singolo modulo parser
 cd native && cargo build                   # debug build → target/debug/
 npm run build:native                       # release build → *.node
 ```

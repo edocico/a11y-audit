@@ -30,7 +30,8 @@
       "Bash(rustc:*)",
       "Bash(cargo:*)",
       "Bash(node --version:*)",
-      "Bash(npm:*)"
+      "Bash(npm:*)",
+      "Bash(git rm:*)"
     ]
   }
 }

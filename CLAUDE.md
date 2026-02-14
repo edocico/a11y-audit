@@ -11,7 +11,7 @@ A framework-agnostic static contrast audit library for WCAG 2.1 AA/AAA and APCA.
 - `docs/plans/2026-02-13-library-extraction.md` — The implementation plan (6 phases, 23 tasks). Completed. Useful as reference for design decisions.
 - `docs/LIBRARY_ARCHITECTURE.md` — Comprehensive architecture doc (in Italian) covering the current package structure, algorithms, types, and config system. **This is the canonical technical reference.**
 - `oldDoc/A11Y_AUDIT_TECHNICAL_ARCHITECTURE.md` — Architecture of the **original embedded script** (in Italian). Use as reference when porting source code from `../multicoin-frontend/scripts/a11y-audit/`. This does NOT describe the current package's architecture.
-- `docs/plans/2026-02-13-phase1-rust-core-engine.md` — Phase 1 Rust engine plan (20 tasks). Tasks 1–6 complete. Covers NAPI-RS setup, math engine, JSX parser, and pipeline integration.
+- `docs/plans/2026-02-13-phase1-rust-core-engine.md` — Phase 1 Rust engine plan (20 tasks). Tasks 1–12 complete. Covers NAPI-RS setup, math engine, JSX parser, and pipeline integration.
 
 ## Commands
 
@@ -55,6 +55,14 @@ cd native && cargo test -- math::wcag          # single Rust module
 - `native/` — Rust core engine (NAPI-RS), in progress
   - `native/src/types.rs` — Rust equivalents of `core/types.ts` with `#[napi(object)]` for JS interop.
   - `native/src/math/` — Color math: `hex.rs` (parseHexRGB), `composite.rs` (compositeOver), `wcag.rs` (WCAG 2.1 contrast), `apca.rs` (APCA Lc), `color_parse.rs` (toHex via csscolorparser).
+  - `native/src/math/checker.rs` — `check_contrast()` + `check_all_pairs()`: full WCAG + APCA + compositing pipeline with AA/AAA threshold selection.
+  - `native/src/parser/` — JSX parser with Visitor pattern architecture.
+    - `visitor.rs` — `JsxVisitor` trait (on_tag_open, on_tag_close, on_comment, on_class_attribute, on_file_end).
+    - `tokenizer.rs` — `scan_jsx()`: lossy JSX lexer emitting events to visitors. Handles className="...", className={...}, cn()/clsx()/cva().
+    - `context_tracker.rs` — `ContextTracker`: LIFO stack for container bg context, @a11y-context-block, explicit bg-* detection.
+    - `annotation_parser.rs` — `AnnotationParser`: per-element @a11y-context and a11y-ignore annotation parsing with pending/consume pattern.
+    - `class_extractor.rs` — `ClassExtractor`: builder (not a visitor) that produces ClassRegion objects. Needs cross-visitor state → uses `record()` method.
+    - `disabled_detector.rs` — `DisabledDetector`: US-07 native-only feature. Detects `disabled`, `aria-disabled="true"`, `disabled:` Tailwind variant.
 - `src/native/index.ts` — JS binding loader with graceful legacy fallback.
 
 ### Key design decisions
@@ -103,3 +111,6 @@ cd ../multicoin-frontend && node ../a11y-audit/dist/bin/cli.js \
 - **colord requires a11y plugin**: `colord(x).contrast(y)` requires `extend([a11yPlugin])` first. Import from `colord/plugins/a11y`.
 - **Native .node loading**: `cargo build` produces a `.so`/`.dylib` file. Copy to `native/a11y-audit-native.node` for Node.js to load it. Use absolute paths in smoke tests.
 - **git commands from project root**: Always run `git add`/`git commit` from the project root, not from `native/`.
+- **Pre-staged git artifacts**: If `native/target/` or `*.node` files are in git's staging area, `.gitignore` won't protect them. Use `git rm -r --cached native/target/` to remove from tracking. Always verify `git status` before committing to avoid including build artifacts.
+- **Rust raw strings with hex colors**: `r#"..."#` breaks when content contains `"#` (e.g. hex color values in test JSX). Use `r##"..."##` for test strings containing hex colors.
+- **ClassExtractor is NOT a JsxVisitor**: Unlike other parser visitors, ClassExtractor needs cross-visitor state (ContextTracker.current_bg + AnnotationParser.take_pending_*). It's a builder with a `record()` method. Task 14 must create a combined orchestrator that coordinates state flow between visitors.
