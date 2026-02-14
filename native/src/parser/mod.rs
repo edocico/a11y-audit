@@ -5,6 +5,7 @@ pub mod annotation_parser;
 pub mod class_extractor;
 pub mod disabled_detector;
 pub mod current_color_resolver;
+pub mod opacity;
 
 use std::collections::HashMap;
 
