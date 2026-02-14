@@ -96,6 +96,8 @@ pub struct ContrastResult {
 pub struct ExtractOptions {
     pub file_contents: Vec<FileInput>,
     pub container_config: Vec<ContainerEntry>,
+    /// US-04: Portal components → bg class or "reset"
+    pub portal_config: Vec<ContainerEntry>,
     pub default_bg: String,
 }
 

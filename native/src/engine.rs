@@ -17,12 +17,22 @@ pub fn extract_and_scan(options: &ExtractOptions) -> Vec<PreExtractedFile> {
         .map(|e| (e.component.clone(), e.bg_class.clone()))
         .collect();
 
+    let portal_config: HashMap<String, String> = options
+        .portal_config
+        .iter()
+        .map(|e| (e.component.clone(), e.bg_class.clone()))
+        .collect();
+
     options
         .file_contents
         .par_iter()
         .map(|file_input| {
-            let regions =
-                crate::parser::scan_file(&file_input.content, &container_config, &options.default_bg);
+            let regions = crate::parser::scan_file(
+                &file_input.content,
+                &container_config,
+                &portal_config,
+                &options.default_bg,
+            );
             PreExtractedFile {
                 path: file_input.path.clone(),
                 regions,
@@ -51,6 +61,7 @@ mod tests {
                     bg_class: b.to_string(),
                 })
                 .collect(),
+            portal_config: vec![],
             default_bg: "bg-background".to_string(),
         }
     }
@@ -135,6 +146,7 @@ mod tests {
                 })
                 .collect(),
             container_config: vec![],
+            portal_config: vec![],
             default_bg: "bg-background".to_string(),
         };
         let results = extract_and_scan(&options);

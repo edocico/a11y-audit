@@ -44,9 +44,13 @@ struct ScanOrchestrator {
 }
 
 impl ScanOrchestrator {
-    fn new(container_config: HashMap<String, String>, default_bg: String) -> Self {
+    fn new(
+        container_config: HashMap<String, String>,
+        portal_config: HashMap<String, String>,
+        default_bg: String,
+    ) -> Self {
         Self {
-            context_tracker: ContextTracker::new(container_config, default_bg),
+            context_tracker: ContextTracker::new_with_portals(container_config, portal_config, default_bg),
             annotation_parser: AnnotationParser::new(),
             class_extractor: ClassExtractor::new(),
             current_color: CurrentColorResolver::new(),
@@ -146,10 +150,12 @@ impl JsxVisitor for ScanOrchestrator {
 pub fn scan_file(
     source: &str,
     container_config: &HashMap<String, String>,
+    portal_config: &HashMap<String, String>,
     default_bg: &str,
 ) -> Vec<ClassRegion> {
     let mut orchestrator = ScanOrchestrator::new(
         container_config.clone(),
+        portal_config.clone(),
         default_bg.to_string(),
     );
 
@@ -173,6 +179,7 @@ mod integration_tests {
         let regions = scan_file(
             r##"<div className="bg-red-500 text-white">x</div>"##,
             &make_config(&[]),
+            &HashMap::new(),
             "bg-background",
         );
         assert_eq!(regions.len(), 1);
@@ -187,7 +194,7 @@ mod integration_tests {
     <h1 className="text-card-foreground text-2xl font-bold">Title</h1>
     <p className="text-muted-foreground">Description</p>
 </div>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions.len(), 3);
         assert_eq!(regions[0].content, "bg-card p-4");
         assert_eq!(regions[1].content, "text-card-foreground text-2xl font-bold");
@@ -202,6 +209,7 @@ mod integration_tests {
         let regions = scan_file(
             r##"<Card><span className="text-white">x</span></Card>"##,
             &config,
+            &HashMap::new(),
             "bg-background",
         );
         assert_eq!(regions.len(), 1);
@@ -218,7 +226,7 @@ mod integration_tests {
     </Dialog>
     <span className="text-c">c</span>
 </Card>"##;
-        let regions = scan_file(source, &config, "bg-background");
+        let regions = scan_file(source, &config, &HashMap::new(), "bg-background");
         assert_eq!(regions.len(), 3);
         assert_eq!(regions[0].context_bg, "bg-card");
         assert_eq!(regions[1].context_bg, "bg-dialog");
@@ -230,6 +238,7 @@ mod integration_tests {
         let regions = scan_file(
             r##"<div className="bg-red-500"><span className="text-white">x</span></div>"##,
             &make_config(&[]),
+            &HashMap::new(),
             "bg-background",
         );
         assert_eq!(regions.len(), 2);
@@ -244,7 +253,7 @@ mod integration_tests {
     #[test]
     fn a11y_context_single_element() {
         let source = "// @a11y-context bg:#09090b\n<div className=\"text-white\">x</div>";
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].context_override_bg, Some("#09090b".to_string()));
     }
@@ -252,7 +261,7 @@ mod integration_tests {
     #[test]
     fn a11y_context_with_fg() {
         let source = "// @a11y-context bg:bg-slate-900 fg:text-white\n<div className=\"text-muted\">x</div>";
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions[0].context_override_bg, Some("bg-slate-900".to_string()));
         assert_eq!(regions[0].context_override_fg, Some("text-white".to_string()));
     }
@@ -260,7 +269,7 @@ mod integration_tests {
     #[test]
     fn a11y_context_no_inherit() {
         let source = "// @a11y-context bg:#fff no-inherit\n<div className=\"text-black\">x</div>";
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions[0].context_override_no_inherit, Some(true));
     }
 
@@ -270,7 +279,7 @@ mod integration_tests {
 <div>
     <span className="text-white">inside block</span>
 </div>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].context_bg, "bg-slate-900");
     }
@@ -278,7 +287,7 @@ mod integration_tests {
     #[test]
     fn a11y_context_consumed_once() {
         let source = "// @a11y-context bg:#09090b\n<div className=\"text-white\">x</div>\n<div className=\"text-gray\">y</div>";
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions.len(), 2);
         // First element gets the override
         assert_eq!(regions[0].context_override_bg, Some("#09090b".to_string()));
@@ -291,7 +300,7 @@ mod integration_tests {
     #[test]
     fn a11y_ignore_with_reason() {
         let source = "// a11y-ignore: dynamic background\n<div className=\"text-white\">x</div>";
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions[0].ignored, Some(true));
         assert_eq!(regions[0].ignore_reason, Some("dynamic background".to_string()));
     }
@@ -299,7 +308,7 @@ mod integration_tests {
     #[test]
     fn a11y_ignore_no_reason() {
         let source = "// a11y-ignore\n<div className=\"text-white\">x</div>";
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions[0].ignored, Some(true));
         assert_eq!(regions[0].ignore_reason, Some("suppressed".to_string()));
     }
@@ -309,7 +318,7 @@ mod integration_tests {
     #[test]
     fn disabled_attribute_flags_region() {
         let source = r##"<button disabled className="text-gray-400 bg-gray-100">Disabled</button>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].ignored, Some(true));
         assert!(regions[0].ignore_reason.as_ref().unwrap().contains("disabled"));
@@ -318,7 +327,7 @@ mod integration_tests {
     #[test]
     fn aria_disabled_true_flags_region() {
         let source = r##"<div aria-disabled="true" className="text-gray-400">x</div>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions[0].ignored, Some(true));
         assert!(regions[0].ignore_reason.as_ref().unwrap().contains("disabled"));
     }
@@ -326,7 +335,7 @@ mod integration_tests {
     #[test]
     fn disabled_variant_in_class_flags_region() {
         let source = r##"<button className="disabled:opacity-50 text-gray-400">x</button>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions[0].ignored, Some(true));
         assert!(regions[0].ignore_reason.as_ref().unwrap().contains("disabled"));
     }
@@ -334,7 +343,7 @@ mod integration_tests {
     #[test]
     fn not_disabled_no_flag() {
         let source = r##"<button className="text-gray-400 bg-gray-100">Active</button>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions[0].ignored, None);
         assert_eq!(regions[0].ignore_reason, None);
     }
@@ -343,7 +352,7 @@ mod integration_tests {
     fn explicit_a11y_ignore_takes_precedence_over_disabled() {
         // If both disabled and a11y-ignore are present, a11y-ignore reason wins
         let source = "// a11y-ignore: custom reason\n<button disabled className=\"text-gray-400\">x</button>";
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions[0].ignored, Some(true));
         assert_eq!(regions[0].ignore_reason, Some("custom reason".to_string()));
     }
@@ -353,14 +362,14 @@ mod integration_tests {
     #[test]
     fn inline_style_color_extracted() {
         let source = r##"<div style={{ color: "red" }} className="text-white">x</div>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions[0].inline_color, Some("red".to_string()));
     }
 
     #[test]
     fn inline_style_background_color_extracted() {
         let source = r##"<div style={{ backgroundColor: '#ff0000' }} className="text-white">x</div>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions[0].inline_background_color, Some("#ff0000".to_string()));
     }
 
@@ -371,6 +380,7 @@ mod integration_tests {
         let regions = scan_file(
             r##"<div className={'bg-red-500 text-white'}>x</div>"##,
             &make_config(&[]),
+            &HashMap::new(),
             "bg-background",
         );
         assert_eq!(regions.len(), 1);
@@ -382,6 +392,7 @@ mod integration_tests {
         let regions = scan_file(
             r##"<div className={`bg-red-500 ${expr} text-white`}>x</div>"##,
             &make_config(&[]),
+            &HashMap::new(),
             "bg-background",
         );
         assert_eq!(regions.len(), 1);
@@ -394,6 +405,7 @@ mod integration_tests {
         let regions = scan_file(
             r##"<div className={cn("bg-red-500", "text-white")}>x</div>"##,
             &make_config(&[]),
+            &HashMap::new(),
             "bg-background",
         );
         assert_eq!(regions.len(), 1);
@@ -405,7 +417,7 @@ mod integration_tests {
     #[test]
     fn line_numbers_correct() {
         let source = "line1\n<div className=\"bg-red\">\nx\n</div>";
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions[0].start_line, 2);
     }
 
@@ -430,7 +442,7 @@ mod integration_tests {
     );
 }"##;
         let config = make_config(&[("Card", "bg-card")]);
-        let regions = scan_file(source, &config, "bg-background");
+        let regions = scan_file(source, &config, &HashMap::new(), "bg-background");
 
         // h1: inside Card, gets bg-card context
         assert_eq!(regions[0].content, "text-card-foreground text-2xl font-bold");
@@ -463,13 +475,13 @@ mod integration_tests {
 
     #[test]
     fn empty_source_returns_empty() {
-        let regions = scan_file("", &make_config(&[]), "bg-background");
+        let regions = scan_file("", &make_config(&[]), &HashMap::new(), "bg-background");
         assert!(regions.is_empty());
     }
 
     #[test]
     fn no_classname_returns_empty() {
-        let regions = scan_file("<div>hello</div>", &make_config(&[]), "bg-background");
+        let regions = scan_file("<div>hello</div>", &make_config(&[]), &HashMap::new(), "bg-background");
         assert!(regions.is_empty());
     }
 
@@ -478,6 +490,7 @@ mod integration_tests {
         let regions = scan_file(
             r##"<input className="text-white" />"##,
             &make_config(&[]),
+            &HashMap::new(),
             "bg-background",
         );
         assert_eq!(regions.len(), 1);
@@ -489,7 +502,7 @@ mod integration_tests {
         // Self-closing container should NOT push context for subsequent elements
         let config = make_config(&[("Card", "bg-card")]);
         let source = r##"<Card /><span className="text-white">x</span>"##;
-        let regions = scan_file(source, &config, "bg-background");
+        let regions = scan_file(source, &config, &HashMap::new(), "bg-background");
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].context_bg, "bg-background"); // NOT bg-card
     }
@@ -501,7 +514,7 @@ mod integration_tests {
         let source = r##"<div className="opacity-50">
     <span className="text-white">x</span>
 </div>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions.len(), 2);
         // div itself: opacity-50 is on this element -> effective = 0.5
         assert_eq!(regions[0].effective_opacity, Some(0.5));
@@ -516,7 +529,7 @@ mod integration_tests {
         <span className="text-white">x</span>
     </div>
 </div>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         let inner_span = &regions[2];
         // 0.5 * 0.5 = 0.25
         assert!((inner_span.effective_opacity.unwrap() - 0.25).abs() < 0.01);
@@ -525,7 +538,7 @@ mod integration_tests {
     #[test]
     fn no_opacity_returns_none() {
         let source = r##"<div className="bg-red-500 text-white">x</div>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         assert_eq!(regions[0].effective_opacity, None);
     }
 
@@ -535,7 +548,7 @@ mod integration_tests {
         let source = r##"<Card className="opacity-75">
     <span className="text-white">x</span>
 </Card>"##;
-        let regions = scan_file(source, &config, "bg-background");
+        let regions = scan_file(source, &config, &HashMap::new(), "bg-background");
         // Card's own className: opacity 0.75
         assert_eq!(regions[0].effective_opacity, Some(0.75));
         assert_eq!(regions[0].context_bg, "bg-background"); // parent bg (pre_tag_open)
@@ -551,7 +564,7 @@ mod integration_tests {
         let source = r##"<div className="opacity-0">
     <span className="text-white">invisible</span>
 </div>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         // span inside opacity-0 container is invisible
         let span = regions.iter().find(|r| r.content == "text-white").unwrap();
         assert_eq!(span.ignored, Some(true));
@@ -563,7 +576,7 @@ mod integration_tests {
         let source = r##"<div className="opacity-5">
     <span className="text-white">barely visible</span>
 </div>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         let span = regions.iter().find(|r| r.content == "text-white").unwrap();
         assert_eq!(span.ignored, Some(true));
         assert!(span.ignore_reason.as_ref().unwrap().contains("opacity"));
@@ -574,9 +587,55 @@ mod integration_tests {
         let source = r##"<div className="opacity-50">
     <span className="text-white">visible</span>
 </div>"##;
-        let regions = scan_file(source, &make_config(&[]), "bg-background");
+        let regions = scan_file(source, &make_config(&[]), &HashMap::new(), "bg-background");
         let span = regions.iter().find(|r| r.content == "text-white").unwrap();
         // 0.5 >= 0.1 threshold -> not invisible
         assert_ne!(span.ignored, Some(true));
+    }
+
+    // ── Portal context reset (US-04) ──
+
+    fn scan_file_with_portals(
+        source: &str,
+        config: &HashMap<String, String>,
+        portals: &HashMap<String, String>,
+        default_bg: &str,
+    ) -> Vec<ClassRegion> {
+        super::scan_file(source, config, portals, default_bg)
+    }
+
+    #[test]
+    fn portal_resets_context() {
+        let config = make_config(&[("Card", "bg-card")]);
+        let portals: HashMap<String, String> = [
+            ("DialogContent".to_string(), "reset".to_string()),
+        ].into_iter().collect();
+        let source = r##"<Card>
+    <span className="text-a">a</span>
+    <DialogContent>
+        <span className="text-b">b</span>
+    </DialogContent>
+</Card>"##;
+        let regions = scan_file_with_portals(source, &config, &portals, "bg-background");
+        // text-a: inside Card -> bg-card
+        assert_eq!(regions[0].context_bg, "bg-card");
+        // text-b: inside DialogContent (portal reset) -> bg-background
+        assert_eq!(regions[1].context_bg, "bg-background");
+    }
+
+    #[test]
+    fn portal_resets_opacity() {
+        let portals: HashMap<String, String> = [
+            ("DialogContent".to_string(), "reset".to_string()),
+        ].into_iter().collect();
+        let source = r##"<div className="opacity-50">
+    <DialogContent>
+        <span className="text-white">x</span>
+    </DialogContent>
+</div>"##;
+        let regions = scan_file_with_portals(source, &HashMap::new(), &portals, "bg-background");
+        let span = regions.iter().find(|r| r.content == "text-white").unwrap();
+        // Portal resets opacity -> span is fully opaque (None = 1.0)
+        assert_eq!(span.effective_opacity, None);
     }
 }
