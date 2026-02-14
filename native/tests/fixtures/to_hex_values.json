@@ -1,0 +1,14 @@
+[
+  { "input": "oklch(0.637 0.237 25.331)", "expected": "#fb2c36" },
+  { "input": "hsl(210, 40%, 98%)", "expected": "#f8fafc" },
+  { "input": "rgb(255, 0, 128)", "expected": "#ff0080" },
+  { "input": "#1e293b", "expected": "#1e293b" },
+  { "input": "#f00", "expected": "#ff0000" },
+  { "input": "#ff000080", "expected": "#ff000080" },
+  { "input": "transparent", "expected": null },
+  { "input": "inherit", "expected": null },
+  { "input": "currentColor", "expected": null },
+  { "input": "red", "expected": "#ff0000" },
+  { "input": "rgb(255 0 0)", "expected": "#ff0000" },
+  { "input": "hsl(0, 100%, 50%)", "expected": "#ff0000" }
+]
