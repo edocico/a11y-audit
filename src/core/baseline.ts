@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import type { BaselineData, ContrastResult } from './types.js';
+import type { BaselineData, BaselineSummary, ContrastResult } from './types.js';
 
 /**
  * Generates a content-addressable hash for a violation.
@@ -66,4 +66,67 @@ export function saveBaseline(
   };
 
   writeFileSync(baselinePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+}
+
+export interface ReconciliationResult extends BaselineSummary {
+  annotated: ContrastResult[];
+}
+
+/**
+ * Annotates each violation as baseline (known) or new.
+ * Uses leaky-bucket counting: per hash, consumes baseline count in input order.
+ * Preserves input array order for downstream theme redistribution.
+ */
+export function reconcileViolations(
+  violations: ContrastResult[],
+  baseline: BaselineData | null,
+): ReconciliationResult {
+  if (!baseline) {
+    return {
+      annotated: violations.map(v => ({ ...v, isBaseline: false })),
+      newCount: violations.length,
+      knownCount: 0,
+      fixedCount: 0,
+      baselineTotal: 0,
+    };
+  }
+
+  // Compute baseline total
+  const baselineTotal = Object.values(baseline.violations)
+    .reduce((sum, fileHashes) =>
+      sum + Object.values(fileHashes).reduce((s, c) => s + c, 0), 0);
+
+  // Flatten baseline into hash → remaining count
+  const remainingCounts = new Map<string, number>();
+  for (const fileHashes of Object.values(baseline.violations)) {
+    for (const [hash, count] of Object.entries(fileHashes)) {
+      remainingCounts.set(hash, (remainingCounts.get(hash) ?? 0) + count);
+    }
+  }
+
+  let newCount = 0;
+  let knownCount = 0;
+  const annotated: ContrastResult[] = [];
+
+  for (const v of violations) {
+    const hash = generateViolationHash(v);
+    const remaining = remainingCounts.get(hash) ?? 0;
+
+    if (remaining > 0) {
+      annotated.push({ ...v, isBaseline: true });
+      remainingCounts.set(hash, remaining - 1);
+      knownCount++;
+    } else {
+      annotated.push({ ...v, isBaseline: false });
+      newCount++;
+    }
+  }
+
+  // Remaining baseline entries are fixed violations
+  let fixedCount = 0;
+  for (const count of remainingCounts.values()) {
+    fixedCount += count;
+  }
+
+  return { annotated, newCount, knownCount, fixedCount, baselineTotal };
 }
