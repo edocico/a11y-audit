@@ -22,6 +22,9 @@ export const auditConfigSchema = z.object({
   /** Container context: component name → bg class */
   containers: z.record(z.string(), z.string()).default({}),
 
+  /** Portal context: component name → bg class or "reset" (resets to defaultBg) */
+  portals: z.record(z.string(), z.string()).default({}),
+
   /** Default page background class */
   defaultBg: z.string().default('bg-background'),
 

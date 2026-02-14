@@ -9,6 +9,7 @@ export const DEFAULT_CONFIG: AuditConfigResolved = {
   format: 'markdown',
   dark: true,
   containers: {},
+  portals: {},
   defaultBg: 'bg-background',
   pageBg: { light: '#ffffff', dark: '#09090b' },
   preset: undefined,

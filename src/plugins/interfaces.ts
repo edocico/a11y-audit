@@ -28,12 +28,15 @@ export interface FileParser {
 
 /**
  * Maps component names to their implicit background classes.
- * shadcn preset: Card → bg-card, DialogContent → bg-background
+ * shadcn preset: Card → bg-card; portals: DialogContent → "reset"
  * Custom: user-defined mappings
  */
 export interface ContainerConfig {
   /** Component name → default bg class (e.g., "Card" → "bg-card") */
   readonly containers: ReadonlyMap<string, string>;
+
+  /** Portal components → bg class or "reset". Resets context stack + opacity at boundary. */
+  readonly portals: ReadonlyMap<string, string>;
 
   /** Default page background class (e.g., "bg-background") */
   readonly defaultBg: string;

@@ -55,4 +55,21 @@ describe('auditConfigSchema', () => {
     expect(result.baseline!.enabled).toBe(true);
     expect(result.baseline!.path).toBe('custom-baseline.json');
   });
+
+  it('should accept portals configuration', () => {
+    const input = {
+      portals: {
+        DialogContent: 'reset',
+        PopoverContent: 'bg-popover',
+        DialogOverlay: 'bg-black/80',
+      },
+    };
+    const result = auditConfigSchema.parse(input);
+    expect(result.portals).toEqual(input.portals);
+  });
+
+  it('should default portals to empty object', () => {
+    const result = auditConfigSchema.parse({});
+    expect(result.portals).toEqual({});
+  });
 });

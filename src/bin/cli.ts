@@ -56,7 +56,7 @@ program
         : findTailwindPalette(cwd);
 
       // 4. Build container config from preset + config overrides
-      const containerConfig = buildContainerConfig(preset, fileConfig.containers, fileConfig.defaultBg, fileConfig.pageBg);
+      const containerConfig = buildContainerConfig(preset, fileConfig.containers, fileConfig.portals, fileConfig.defaultBg, fileConfig.pageBg);
 
       // 5. Run pipeline
       const pipelineOpts: PipelineOptions = {
@@ -118,11 +118,12 @@ program
 program.parse();
 
 /**
- * Merges a preset (e.g., shadcn) with user-defined container overrides.
+ * Merges a preset (e.g., shadcn) with user-defined container and portal overrides.
  */
 function buildContainerConfig(
   preset: string | undefined,
   userContainers: Record<string, string>,
+  userPortals: Record<string, string>,
   defaultBg: string,
   pageBg: { light: string; dark: string },
 ): ContainerConfig {
@@ -136,14 +137,19 @@ function buildContainerConfig(
   }
 
   const containers = new Map<string, string>(basePreset?.containers ?? []);
+  const portals = new Map<string, string>(basePreset?.portals ?? []);
 
   // User overrides merge on top of preset
   for (const [key, value] of Object.entries(userContainers)) {
     containers.set(key, value);
   }
+  for (const [key, value] of Object.entries(userPortals)) {
+    portals.set(key, value);
+  }
 
   return {
     containers,
+    portals,
     defaultBg: basePreset?.defaultBg ?? defaultBg,
     pageBg: basePreset?.pageBg ?? pageBg,
   };
