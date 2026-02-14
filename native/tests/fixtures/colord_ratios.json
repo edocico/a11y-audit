@@ -1,0 +1,10 @@
+[
+  { "fg": "#000000", "bg": "#ffffff", "expected": 21.0 },
+  { "fg": "#767676", "bg": "#ffffff", "expected": 4.54 },
+  { "fg": "#ff0000", "bg": "#ffffff", "expected": 3.99 },
+  { "fg": "#1e293b", "bg": "#ffffff", "expected": 14.62 },
+  { "fg": "#09090b", "bg": "#ffffff", "expected": 19.89 },
+  { "fg": "#ffffff", "bg": "#09090b", "expected": 19.89 },
+  { "fg": "#a1a1aa", "bg": "#09090b", "expected": 7.76 },
+  { "fg": "#f4f4f5", "bg": "#18181b", "expected": 16.11 }
+]
