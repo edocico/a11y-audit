@@ -51,6 +51,8 @@ interface NativeClassRegion {
   contextOverrideNoInherit?: boolean | null;
   ignored?: boolean | null;
   ignoreReason?: string | null;
+  /** US-05: Cumulative opacity from ancestor containers (0.0-1.0). null = fully opaque. */
+  effectiveOpacity?: number | null;
 }
 
 // ── Test Fixtures ───────────────────────────────────────────────────
@@ -207,6 +209,20 @@ const FIXTURES: Fixture[] = [
   </div>
 </Card>`,
     containers: true,
+  },
+  // US-05: Opacity fixtures — native tracks effectiveOpacity, TS does not.
+  // Normalization skips effectiveOpacity so these should PASS on region content/line/contextBg.
+  {
+    name: 'opacity-50 container',
+    source: '<div className="opacity-50"><span className="text-white">x</span></div>',
+  },
+  {
+    name: 'nested opacity multiplication',
+    source: '<div className="opacity-50"><div className="opacity-50"><span className="text-white">x</span></div></div>',
+  },
+  {
+    name: 'opacity-0 invisible',
+    source: '<div className="opacity-0"><span className="text-white">x</span></div>',
   },
 ];
 

@@ -229,3 +229,93 @@ describe('Integration: report generation', () => {
     vi.useRealTimers();
   });
 });
+
+// ── US-05: Opacity stack E2E tests ─────────────────────────────────────
+
+describe('Integration: US-05 opacity stack', () => {
+  test('effectiveOpacity reduces contrast via alpha reduction on both bg and text', () => {
+    const colorMap = createIntegrationColorMap();
+    const preExtracted: PreExtracted = {
+      files: [{
+        relPath: 'opacity-test.tsx',
+        lines: [
+          '<div className="opacity-50">',
+          '  <span className="bg-background text-foreground">content</span>',
+          '</div>',
+        ],
+        regions: [{
+          content: 'bg-background text-foreground',
+          startLine: 2,
+          contextBg: 'bg-background',
+          effectiveOpacity: 0.5,
+        }],
+      }],
+      readErrors: [],
+      filesScanned: 1,
+    };
+
+    const { pairs } = resolveFileRegions(preExtracted, colorMap, 'light');
+    expect(pairs.length).toBeGreaterThan(0);
+    // effectiveOpacity should reduce both alphas
+    expect(pairs[0]!.effectiveOpacity).toBe(0.5);
+    expect(pairs[0]!.bgAlpha).toBe(0.5);
+    expect(pairs[0]!.textAlpha).toBe(0.5);
+  });
+
+  test('no effectiveOpacity means normal contrast (no alpha reduction)', () => {
+    const colorMap = createIntegrationColorMap();
+    const preExtracted: PreExtracted = {
+      files: [{
+        relPath: 'no-opacity-test.tsx',
+        lines: [
+          '<span className="bg-background text-foreground">content</span>',
+        ],
+        regions: [{
+          content: 'bg-background text-foreground',
+          startLine: 1,
+          contextBg: 'bg-background',
+        }],
+      }],
+      readErrors: [],
+      filesScanned: 1,
+    };
+
+    const { pairs } = resolveFileRegions(preExtracted, colorMap, 'light');
+    expect(pairs.length).toBeGreaterThan(0);
+    expect(pairs[0]!.effectiveOpacity).toBeUndefined();
+    expect(pairs[0]!.bgAlpha).toBeUndefined();
+    expect(pairs[0]!.textAlpha).toBeUndefined();
+  });
+
+  test('effectiveOpacity flows through full pipeline to contrast results', () => {
+    const colorMap = createIntegrationColorMap();
+    const preExtracted: PreExtracted = {
+      files: [{
+        relPath: 'opacity-pipeline.tsx',
+        lines: [
+          '<div className="opacity-50">',
+          '  <span className="bg-background text-foreground">content</span>',
+          '</div>',
+        ],
+        regions: [{
+          content: 'bg-background text-foreground',
+          startLine: 2,
+          contextBg: 'bg-background',
+          effectiveOpacity: 0.5,
+        }],
+      }],
+      readErrors: [],
+      filesScanned: 1,
+    };
+
+    const { pairs, skipped, filesScanned } = resolveFileRegions(preExtracted, colorMap, 'light');
+    const result = checkAllPairs(pairs, skipped, filesScanned, 'light');
+
+    // The pair should appear in results (violations or passed) with effectiveOpacity
+    const allResults = [...result.violations, ...result.passed, ...result.ignored];
+    expect(allResults.length).toBeGreaterThan(0);
+    const opacityResult = allResults.find(r => r.file === 'opacity-pipeline.tsx');
+    expect(opacityResult).toBeDefined();
+    expect(opacityResult!.effectiveOpacity).toBe(0.5);
+  });
+});
