@@ -50,6 +50,8 @@ export interface ContrastResult extends ColorPair {
   passAAALarge: boolean;
   /** APCA Lightness Contrast value (Lc). null if APCA calculation disabled */
   apcaLc?: number | null;
+  /** true = known baseline violation, false = new violation, undefined = baseline not active */
+  isBaseline?: boolean;
 }
 
 /** A class that couldn't be resolved */
@@ -117,4 +119,19 @@ export interface FileRegions {
   relPath: string;
   lines: string[];
   regions: ClassRegion[];
+}
+
+/** Stored baseline data: maps file → hash → violation count */
+export interface BaselineData {
+  version: string;
+  generatedAt: string;
+  violations: Record<string, Record<string, number>>;
+}
+
+/** Summary of baseline reconciliation for a single audit run */
+export interface BaselineSummary {
+  newCount: number;
+  knownCount: number;
+  fixedCount: number;
+  baselineTotal: number;
 }
