@@ -1,6 +1,6 @@
 # Architettura Tecnica: a11y-audit Library (v1.0)
 
-> **Ultimo aggiornamento**: 2026-02-13 | **Versione**: 1.0.0 (standalone npm package) | **384 test across 16 files**
+> **Ultimo aggiornamento**: 2026-02-14 | **Versione**: 1.0.0 (standalone npm package) | **384 test TS across 16 files + 41 test Rust across 5 moduli**
 
 ---
 
@@ -63,9 +63,43 @@ resolve(light)    resolve(dark)   <-- risoluzione per-tema (DUE volte)
 | **`glob`** (`globSync`) | File discovery | Pattern matching ricorsivo di `**/*.tsx` con supporto multi-pattern |
 | **`fast-check`** (dev) | Property-based testing | Genera input casuali per validare invarianti matematici (bounds, round-trip, idempotenza) |
 
-### Perche tre librerie colore?
+### Perche tre librerie colore? (Layer TypeScript)
 
 `culori` gestisce il **parsing** di formati esotici (oklch con lightness percentuale, hsl con sintassi moderna, display-p3). `colord` con il plugin a11y implementa il **calcolo del contrasto** secondo la formula WCAG esatta. `apca-w3` calcola il valore APCA Lc — un algoritmo di contrasto percettivo complementare al ratio WCAG. Sono complementari: `culori` non ha `.contrast()`, `colord` non parsa oklch, e nessuna delle due implementa APCA.
+
+### Native Engine: Rust via NAPI-RS (Phase 1 — in corso)
+
+**Obiettivo**: Portare lo hot path (parsing JSX + math colore) in Rust per ridurre il tempo di scansione di >70%. L'I/O e l'orchestrazione restano in TypeScript.
+
+**Approccio ibrido**: Il modulo nativo (`native/`) espone funzioni via NAPI-RS che sostituiscono le equivalenti TypeScript. Il binding JS (`src/native/index.ts`) fornisce un fallback graceful: se il modulo `.node` non e disponibile (es. piattaforma non supportata), la pipeline usa il codice TS originale.
+
+| Componente | Linguaggio | Scopo |
+| ---------- | ---------- | ----- |
+| **Math engine** (hex, composite, wcag, apca, color_parse) | Rust | Calcoli puri: parsing colori, compositing alpha, contrast ratio WCAG, APCA Lc |
+| **Parser** (tokenizer, visitors) | Rust (planned) | State machine JSX, context stack, annotation parsing |
+| **Pipeline orchestration** | TypeScript | I/O disco, config loading, report generation |
+| **NAPI bridge** | Rust + JS | Conversione tipi Rust ↔ JS via `#[napi(object)]` |
+
+**Stack Rust**:
+
+| Dipendenza | Versione | Scopo |
+| ---------- | -------- | ----- |
+| `napi` + `napi-derive` | 2.x | Binding Rust ↔ Node.js (N-API v8) |
+| `serde` + `serde_json` | 1.x | Serializzazione tipi per interop JS |
+| `csscolorparser` | 0.7 | Parsing CSS colors (oklch, hsl, rgb, named) — equivalente Rust di `culori` |
+
+**Stato attuale (Task 1-6 di 20 completati)**:
+
+- Infrastruttura NAPI-RS funzionante con `health_check()` esposto
+- Tipi condivisi Rust equivalenti a `src/core/types.ts` con campi pre-wired per feature future (US-05, US-07, US-08, Phase 5)
+- 5 moduli math completi: `hex`, `composite`, `wcag`, `apca`, `color_parse`
+- 41 test Rust passanti, cross-validati contro i ground truth generati dalle librerie TS (colord, apca-w3, culori)
+
+**Differenze implementative rispetto al layer TS**:
+
+- **APCA**: Usa `pow(c/255, 2.4)` (curva semplice), NON la funzione piecewise WCAG. Include il **black soft clamp** (`blkThrs=0.022`, `blkClmp=1.414`) essenziale per accuratezza su colori scuri
+- **Color parsing**: `csscolorparser` gestisce oklch nativamente (nessun workaround necessario, a differenza di quanto previsto nel piano)
+- **WCAG contrast**: Implementazione diretta della formula W3C con linearizzazione piecewise sRGB (`soglia 0.04045`)
 
 ### Architettura a Strati (Layered Onion)
 
@@ -89,10 +123,18 @@ resolve(light)    resolve(dark)   <-- risoluzione per-tema (DUE volte)
 |  src/plugins/tailwind/ — css-resolver, palette, presets       |
 |  src/plugins/jsx/ — categorizer, parser, region-resolver      |
 +---------------------------------------------------------------+
-|                  Pure Math Core                                |
+|                  Pure Math Core (TS)                           |
 |  src/core/contrast-checker.ts — WCAG + APCA                  |
 |  src/core/color-utils.ts — toHex() normalizzazione            |
 |  src/core/types.ts — tutti i tipi condivisi                   |
++---------------------------------------------------------------+
+        |  fallback se native non disponibile
+        v
++---------------------------------------------------------------+
+|              Native Engine (Rust + NAPI-RS)                    |
+|  native/src/math/ — hex, composite, wcag, apca, color_parse  |
+|  native/src/types.rs — tipi condivisi Rust                    |
+|  src/native/index.ts — JS binding loader con fallback         |
 +---------------------------------------------------------------+
 ```
 
@@ -113,8 +155,28 @@ a11y-audit/
 │   ├── index.cjs                 # CJS entry
 │   ├── index.d.ts                # Bundled type declarations
 │   └── bin/cli.js                # Compiled CLI binary
+├── native/                       # Rust native engine (NAPI-RS)
+│   ├── Cargo.toml                # Crate config: napi, serde, csscolorparser
+│   ├── build.rs                  # NAPI build script
+│   ├── src/
+│   │   ├── lib.rs                # Root: health_check(), mod declarations
+│   │   ├── types.rs              # Rust equivalents of core/types.ts (#[napi(object)])
+│   │   └── math/
+│   │       ├── mod.rs            # Module declarations
+│   │       ├── hex.rs            # parse_hex_rgb(), extract_hex_alpha(), strip_hex_alpha()
+│   │       ├── composite.rs      # composite_over() — Porter-Duff source-over
+│   │       ├── wcag.rs           # srgb_to_linear(), relative_luminance(), contrast_ratio()
+│   │       ├── apca.rs           # calc_apca_lc() — APCA-W3 con black soft clamp
+│   │       └── color_parse.rs    # to_hex() — CSS color → hex via csscolorparser
+│   └── tests/
+│       └── fixtures/             # Ground truth JSON per cross-validation
+│           ├── colord_ratios.json    # 8 WCAG ratio pairs (da colord)
+│           ├── apca_values.json      # 6 APCA Lc pairs (da apca-w3)
+│           └── to_hex_values.json    # 12 toHex conversions (da culori)
 └── src/
     ├── index.ts                  # Public API re-exports
+    ├── native/
+    │   └── index.ts              # JS binding loader: isNativeAvailable(), getNativeModule()
     ├── bin/
     │   └── cli.ts                # Commander-based CLI entry point
     ├── config/
@@ -1167,9 +1229,9 @@ Se Tailwind aggiunge nuove utility con prefisso ambiguo e il report mostra "Unre
 
 ## 9. Testing
 
-### Struttura (384 test, 16 file)
+### Struttura (384 test TS across 16 file + 41 test Rust across 5 moduli)
 
-Il test suite e organizzato in quattro livelli:
+Il test suite e organizzato in quattro livelli (TS) piu i test Rust:
 
 1. **Unit test puri** (no I/O, no mock): Testano funzioni pure con input → output deterministico
 2. **I/O test con mock** (`*.io.test.ts`): Isolano `readFileSync`/`globSync` tramite `vi.mock()`
@@ -1204,6 +1266,19 @@ src/plugins/jsx/__tests__/
   region-resolver.io.test.ts           # extractAllFileRegions con vi.mock('node:fs', 'glob')
 ```
 
+**Test Rust** (41 test, `cargo test` dalla directory `native/`):
+
+```text
+native/src/math/
+  hex.rs            # 8 test: parse_hex_rgb, extract_hex_alpha, strip_hex_alpha
+  composite.rs      # 4 test: composite_over (black/white, midpoint, full opacity)
+  wcag.rs           # 11 test: luminance, contrast ratio, thresholds (cross-validated vs colord)
+  apca.rs           # 6 test: calc_apca_lc (cross-validated vs apca-w3, ±1.0 Lc tolerance)
+  color_parse.rs    # 12 test: to_hex (hex, rgb, hsl, oklch, named, transparent, inherit)
+```
+
+I test Rust usano un approccio **cross-validation**: i valori ground truth sono generati dalle librerie TS (`colord`, `apca-w3`, `culori`) e salvati come fixture JSON in `native/tests/fixtures/`. I test Rust verificano che l'output corrisponda entro tolleranze definite (±1 per canale RGB, ±1.0 per APCA Lc).
+
 ### Convenzioni
 
 - **Co-located**: I test vivono in `__tests__/` accanto al modulo che testano, non in una directory `tests/` separata.
@@ -1214,11 +1289,18 @@ src/plugins/jsx/__tests__/
 ### Comandi
 
 ```bash
+# TypeScript
 npm test                  # vitest run (tutti i test)
 npm run test:watch        # vitest in watch mode
 npx vitest run src/core/__tests__/contrast-checker.test.ts   # singolo file
 npx vitest run -t "compositeOver"                            # singolo test per nome
 npm run typecheck         # tsc --noEmit (strict mode)
+
+# Rust native engine
+cd native && cargo test                    # tutti i 41 test Rust
+cd native && cargo test math::apca         # singolo modulo
+cd native && cargo build                   # debug build → target/debug/
+npm run build:native                       # release build → *.node
 ```
 
 ---
@@ -1246,6 +1328,8 @@ npm run typecheck         # tsc --noEmit (strict mode)
 | Contrast ratio (`colord`) | 2 decimali | `Math.round(ratio * 100) / 100` |
 | Alpha compositing | ±1/255 per canale | `Math.round()` per canale RGB |
 | Alpha threshold | `< 0.999` = semi-trasparente | Evita falsi positivi da floating point |
+| APCA Lc (Rust vs TS) | ±1.0 Lc | Differenze `f64` nei soft clamp edge case |
+| WCAG ratio (Rust vs TS) | ±0.1 | Cross-validato contro `colord` su 8 pairs |
 
 ### Classi non riconosciute: fail-safe
 
@@ -1400,3 +1484,7 @@ A: Si. Usa `// @a11y-context bg:#09090b fg:text-white`. L'override `fg:` sostitu
 | **`@a11y-context-block`** | Annotazione comment-based che sovrascrive il contesto bg per tutti i figli di un blocco (push sul context stack) |
 | **Preset** | Set predefinito di container contexts (es. `shadcn` = 21 componenti) |
 | **Pipeline** | Sequenza di 5 fasi: config → bootstrap → extract → resolve → report |
+| **Native Engine** | Modulo Rust compilato via NAPI-RS che sostituisce gli hot path TS (math + parser) |
+| **NAPI-RS** | Framework per esporre funzioni Rust a Node.js tramite N-API. `#[napi]` per funzioni, `#[napi(object)]` per struct |
+| **Black soft clamp** | Operazione APCA che aggiunge luminanza ai colori molto scuri (`Y < 0.022`) per evitare artefatti nel calcolo Lc |
+| **Cross-validation** | Approccio di test: ground truth generati dalle librerie TS, verificati contro l'implementazione Rust |

@@ -11,17 +11,22 @@ A framework-agnostic static contrast audit library for WCAG 2.1 AA/AAA and APCA.
 - `docs/plans/2026-02-13-library-extraction.md` — The implementation plan (6 phases, 23 tasks). Completed. Useful as reference for design decisions.
 - `docs/LIBRARY_ARCHITECTURE.md` — Comprehensive architecture doc (in Italian) covering the current package structure, algorithms, types, and config system. **This is the canonical technical reference.**
 - `oldDoc/A11Y_AUDIT_TECHNICAL_ARCHITECTURE.md` — Architecture of the **original embedded script** (in Italian). Use as reference when porting source code from `../multicoin-frontend/scripts/a11y-audit/`. This does NOT describe the current package's architecture.
+- `docs/plans/2026-02-13-phase1-rust-core-engine.md` — Phase 1 Rust engine plan (20 tasks). Tasks 1–6 complete. Covers NAPI-RS setup, math engine, JSX parser, and pipeline integration.
 
 ## Commands
 
 ```bash
 npm run build          # tsup → dist/ (CJS + ESM + .d.ts)
+npm run build:native   # cargo build --release → native/target/
+npm run build:native:debug  # cargo build (debug)
 npm run dev            # tsup --watch
 npm test               # vitest run (all tests)
 npm run test:watch     # vitest in watch mode
 npx vitest run src/core/__tests__/contrast-checker.test.ts   # single test file
 npx vitest run -t "compositeOver"                            # single test by name
 npm run typecheck      # tsc --noEmit (strict mode)
+cd native && cargo test                        # all Rust tests
+cd native && cargo test -- math::wcag          # single Rust module
 ```
 
 ## Architecture
@@ -47,6 +52,10 @@ npm run typecheck      # tsc --noEmit (strict mode)
 - `src/plugins/jsx/categorizer.ts` — Pure classification functions: `stripVariants()`, `routeClassToTarget()`, `categorizeClasses()`, `determineIsLargeText()`, `extractBalancedParens()`, `extractStringLiterals()`, `getIgnoreReasonForLine()`, `getContextOverrideForLine()`. Exports `TaggedClass`, `ClassBuckets`, `ForegroundGroup`, `PairMeta` interfaces.
 - `src/plugins/jsx/parser.ts` — JSX state machine: `extractClassRegions(source, containerMap, defaultBg)`, `isSelfClosingTag()`, `findExplicitBgInTag()`, `extractInlineStyleColors()`. Handles `@a11y-context` (single-element) and `@a11y-context-block` (block scope) annotations via context stack. The container map is injected (not imported globally).
 - `src/plugins/jsx/region-resolver.ts` — Bg/fg pairing logic: `buildEffectiveBg()`, `generatePairs()`, `resolveFileRegions()`, `extractAllFileRegions(srcPatterns, cwd, containerMap, defaultBg)`. Cross-plugin dependency: imports `resolveClassToHex` from `tailwind/css-resolver.ts`.
+- `native/` — Rust core engine (NAPI-RS), in progress
+  - `native/src/types.rs` — Rust equivalents of `core/types.ts` with `#[napi(object)]` for JS interop.
+  - `native/src/math/` — Color math: `hex.rs` (parseHexRGB), `composite.rs` (compositeOver), `wcag.rs` (WCAG 2.1 contrast), `apca.rs` (APCA Lc), `color_parse.rs` (toHex via csscolorparser).
+- `src/native/index.ts` — JS binding loader with graceful legacy fallback.
 
 ### Key design decisions
 
@@ -90,3 +99,7 @@ cd ../multicoin-frontend && node ../a11y-audit/dist/bin/cli.js \
 - **file-scanner.ts split**: The original 1258-LOC `file-scanner.ts` is split into 3 modules: `categorizer.ts` (pure classification), `parser.ts` (state machine), `region-resolver.ts` (pairing). `extractBalancedParens` lives in categorizer and is imported by parser.
 - **Plan vs actual test paths**: The plan references `tests/core/...` paths, but the actual convention is co-located `src/<module>/__tests__/`. Always follow the co-located pattern.
 - **lilconfig + .ts configs**: `lilconfig` has no built-in `.ts` loader. Adding `a11y-audit.config.ts` to `searchPlaces` crashes at runtime. Use `.js`/`.mjs`/`.json` only, or add `jiti` as a custom loader.
+- **APCA linearization differs from WCAG**: APCA uses `pow(c/255, 2.4)` (simple power curve), NOT the WCAG piecewise sRGB function. APCA also has a black soft clamp (`blkThrs=0.022`, `blkClmp=1.414`). Always verify constants against `node_modules/apca-w3/src/apca-w3.js`.
+- **colord requires a11y plugin**: `colord(x).contrast(y)` requires `extend([a11yPlugin])` first. Import from `colord/plugins/a11y`.
+- **Native .node loading**: `cargo build` produces a `.so`/`.dylib` file. Copy to `native/a11y-audit-native.node` for Node.js to load it. Use absolute paths in smoke tests.
+- **git commands from project root**: Always run `git add`/`git commit` from the project root, not from `native/`.

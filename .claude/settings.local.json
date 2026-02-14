@@ -26,7 +26,11 @@
       "Bash(git -C /Users/e.cicognani/Mamoka/Git/Netbuilder/a11y-audit add:*)",
       "Bash(git -C /Users/e.cicognani/Mamoka/Git/Netbuilder/a11y-audit commit -m \"$\\(cat <<''EOF''\nfeat: single-element @a11y-context attaches override to ClassRegion\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(git -C /Users/e.cicognani/Mamoka/Git/Netbuilder/a11y-audit commit -m \"$\\(cat <<''EOF''\nfeat: region resolver uses contextOverride for pair generation\n\nWhen a ClassRegion has a contextOverride from @a11y-context annotations,\nthe resolver now uses override.bg for background resolution and\noverride.fg to replace the text color. All generated pairs from\nannotated regions get contextSource: ''annotation''. Hex bg overrides\nroute through the inlineStyles path; Tailwind class overrides go\nthrough the contextBg path. Moved contextSource from ContrastResult\nto ColorPair so the resolver can set it at pair-generation time.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(rustc:*)",
+      "Bash(cargo:*)",
+      "Bash(node --version:*)",
+      "Bash(npm:*)"
     ]
   }
 }
