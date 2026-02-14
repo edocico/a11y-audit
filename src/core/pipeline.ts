@@ -210,11 +210,10 @@ export function runAudit(options: PipelineOptions): AuditRunResult {
   }
 
   // Phase 4: Generate report
-  // TODO: pass baselineSummary to report generators (Tasks 8-9)
   log(verbose, '[a11y-audit] Generating report...');
   const report = format === 'json'
-    ? generateJsonReport(results)
-    : generateReport(results);
+    ? generateJsonReport(results, baselineSummary)
+    : generateReport(results, baselineSummary);
 
   // Write report to disk
   const resolvedReportDir = resolve(cwd, reportDir);
