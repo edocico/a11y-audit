@@ -23,6 +23,8 @@ const BG_NON_COLOR: &[&str] = &[
 pub struct ContextTracker {
     /// Component → bg class mapping (from config, injected)
     container_config: HashMap<String, String>,
+    /// Portal component → bg class mapping ("reset" = use default_bg)
+    portal_config: HashMap<String, String>,
     /// Default background class (e.g. "bg-background")
     default_bg: String,
     /// LIFO stack: (tag_name, bg_class, is_annotation, cumulative_opacity)
@@ -41,8 +43,17 @@ struct StackEntry {
 
 impl ContextTracker {
     pub fn new(container_config: HashMap<String, String>, default_bg: String) -> Self {
+        Self::new_with_portals(container_config, HashMap::new(), default_bg)
+    }
+
+    pub fn new_with_portals(
+        container_config: HashMap<String, String>,
+        portal_config: HashMap<String, String>,
+        default_bg: String,
+    ) -> Self {
         Self {
             container_config,
+            portal_config,
             default_bg,
             stack: Vec::new(),
             pending_block_override: None,
@@ -94,6 +105,27 @@ impl JsxVisitor for ContextTracker {
 
         // Detect opacity-* class in the raw tag (US-05)
         let opacity = super::opacity::find_opacity_in_raw_tag(raw_tag);
+
+        // Check portal config FIRST (portal takes priority over container)
+        if let Some(portal_bg) = self.portal_config.get(tag_name).cloned() {
+            let bg = if portal_bg == "reset" {
+                self.default_bg.clone()
+            } else {
+                portal_bg
+            };
+            // Explicit bg in tag can override the portal config
+            let bg = find_explicit_bg_in_raw_tag(raw_tag).unwrap_or(bg);
+            // Portal resets opacity to 1.0, then applies own opacity
+            let cumulative = opacity.unwrap_or(1.0);
+            self.stack.push(StackEntry {
+                tag: tag_name.to_string(),
+                bg_class: bg,
+                is_annotation: false,
+                cumulative_opacity: cumulative,
+            });
+            return;
+        }
+
         let parent_opacity = self.current_opacity();
         let cumulative = parent_opacity * opacity.unwrap_or(1.0);
 
@@ -492,5 +524,109 @@ mod tests {
         assert_eq!(tracker.current_opacity(), 0.5);
         tracker.on_tag_close("div");
         assert_eq!(tracker.current_opacity(), 1.0);
+    }
+
+    // ── Portal context reset (US-04) ──
+
+    fn make_portal_config() -> HashMap<String, String> {
+        let mut m = HashMap::new();
+        m.insert("DialogContent".to_string(), "reset".to_string());
+        m.insert("PopoverContent".to_string(), "bg-popover".to_string());
+        m.insert("DialogOverlay".to_string(), "bg-black/80".to_string());
+        m
+    }
+
+    #[test]
+    fn portal_reset_uses_default_bg() {
+        let mut tracker = ContextTracker::new_with_portals(
+            make_config(),
+            make_portal_config(),
+            "bg-background".to_string(),
+        );
+        tracker.on_tag_open("Card", false, "<Card>");
+        assert_eq!(tracker.current_bg(), "bg-card");
+        tracker.on_tag_open("DialogContent", false, "<DialogContent>");
+        // "reset" → use defaultBg
+        assert_eq!(tracker.current_bg(), "bg-background");
+    }
+
+    #[test]
+    fn portal_with_explicit_bg() {
+        let mut tracker = ContextTracker::new_with_portals(
+            make_config(),
+            make_portal_config(),
+            "bg-background".to_string(),
+        );
+        tracker.on_tag_open("PopoverContent", false, "<PopoverContent>");
+        assert_eq!(tracker.current_bg(), "bg-popover");
+    }
+
+    #[test]
+    fn portal_resets_opacity() {
+        let mut tracker = ContextTracker::new_with_portals(
+            make_config(),
+            make_portal_config(),
+            "bg-background".to_string(),
+        );
+        tracker.on_tag_open("div", false, r##"<div className="opacity-50">"##);
+        assert_eq!(tracker.current_opacity(), 0.5);
+        tracker.on_tag_open("DialogContent", false, "<DialogContent>");
+        // Portal resets opacity to 1.0
+        assert_eq!(tracker.current_opacity(), 1.0);
+    }
+
+    #[test]
+    fn portal_with_own_opacity() {
+        let mut tracker = ContextTracker::new_with_portals(
+            make_config(),
+            make_portal_config(),
+            "bg-background".to_string(),
+        );
+        tracker.on_tag_open("div", false, r##"<div className="opacity-50">"##);
+        tracker.on_tag_open("DialogOverlay", false, r##"<DialogOverlay className="opacity-75">"##);
+        // Portal resets to 1.0, then applies own 0.75 → 0.75 (NOT 0.5 * 0.75)
+        assert_eq!(tracker.current_opacity(), 0.75);
+        assert_eq!(tracker.current_bg(), "bg-black/80");
+    }
+
+    #[test]
+    fn portal_pop_restores_context() {
+        let mut tracker = ContextTracker::new_with_portals(
+            make_config(),
+            make_portal_config(),
+            "bg-background".to_string(),
+        );
+        tracker.on_tag_open("Card", false, "<Card>");
+        tracker.on_tag_open("DialogContent", false, "<DialogContent>");
+        tracker.on_tag_close("DialogContent");
+        // After portal closes, back to Card context
+        assert_eq!(tracker.current_bg(), "bg-card");
+    }
+
+    #[test]
+    fn portal_children_inherit_portal_bg() {
+        let mut tracker = ContextTracker::new_with_portals(
+            make_config(),
+            make_portal_config(),
+            "bg-background".to_string(),
+        );
+        tracker.on_tag_open("Card", false, "<Card>");
+        tracker.on_tag_open("PopoverContent", false, "<PopoverContent>");
+        // Child element should see bg-popover, not bg-card
+        assert_eq!(tracker.current_bg(), "bg-popover");
+    }
+
+    #[test]
+    fn container_inside_portal_works() {
+        let mut tracker = ContextTracker::new_with_portals(
+            make_config(),
+            make_portal_config(),
+            "bg-background".to_string(),
+        );
+        tracker.on_tag_open("DialogContent", false, "<DialogContent>");
+        tracker.on_tag_open("Card", false, "<Card>");
+        assert_eq!(tracker.current_bg(), "bg-card");
+        tracker.on_tag_close("Card");
+        assert_eq!(tracker.current_bg(), "bg-background"); // DialogContent's reset bg
     }
 }
