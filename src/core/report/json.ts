@@ -1,4 +1,4 @@
-import type { AuditResult, ThemeMode } from '../types.js';
+import type { AuditResult, BaselineSummary, ThemeMode } from '../types.js';
 
 interface ThemedAuditResult {
   mode: ThemeMode;
@@ -9,7 +9,10 @@ interface ThemedAuditResult {
  * Generates a structured JSON audit report from themed results.
  * Includes summary statistics, per-theme violations/passed/skipped/ignored.
  */
-export function generateJsonReport(results: ThemedAuditResult[]): string {
+export function generateJsonReport(
+  results: ThemedAuditResult[],
+  baselineSummary?: BaselineSummary,
+): string {
   const totalViolations = results.reduce((s, r) => s + r.result.violations.length, 0);
   const totalTextViolations = results.reduce(
     (s, r) => s + r.result.violations.filter((v) => !v.pairType || v.pairType === 'text').length,
@@ -27,6 +30,13 @@ export function generateJsonReport(results: ThemedAuditResult[]): string {
         nonTextViolations: totalViolations - totalTextViolations,
         totalSkipped: results.reduce((s, r) => s + r.result.skipped.length, 0),
         totalIgnored: results.reduce((s, r) => s + r.result.ignored.length, 0),
+        ...(baselineSummary
+          ? {
+              newViolations: baselineSummary.newCount,
+              baselineViolations: baselineSummary.knownCount,
+              fixedViolations: baselineSummary.fixedCount,
+            }
+          : {}),
       },
       themes: results.map(({ mode, result }) => ({
         mode,

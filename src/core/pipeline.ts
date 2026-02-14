@@ -11,6 +11,8 @@ import { generateReport } from './report/markdown.js';
 import { generateJsonReport } from './report/json.js';
 import { isNativeAvailable, getNativeModule } from '../native/index.js';
 import { convertNativeResult } from '../native/converter.js';
+import { loadBaseline, saveBaseline, reconcileViolations } from './baseline.js';
+import type { BaselineSummary } from './types.js';
 
 const MAX_REPORT_COUNTER = 100;
 
@@ -23,6 +25,10 @@ export interface AuditRunResult {
   results: ThemedAuditResult[];
   report: string;
   totalViolations: number;
+  /** Present when baseline reconciliation was performed */
+  baselineSummary?: BaselineSummary;
+  /** true when --update-baseline was used and baseline file was written */
+  baselineUpdated?: boolean;
 }
 
 export interface PipelineOptions {
@@ -55,6 +61,14 @@ export interface PipelineOptions {
 
   /** If true, print progress to stderr */
   verbose?: boolean;
+
+  /** Baseline configuration */
+  baseline?: {
+    enabled: boolean;
+    path: string;
+    updateBaseline: boolean;
+    failOnImprovement: boolean;
+  };
 }
 
 function log(verbose: boolean | undefined, msg: string): void {
@@ -152,11 +166,54 @@ export function runAudit(options: PipelineOptions): AuditRunResult {
     results.push({ mode, result });
   }
 
+  // Phase 3.5: Baseline — save or reconcile
+  let baselineSummary: BaselineSummary | undefined;
+  let baselineUpdated = false;
+
+  if (options.baseline) {
+    const resolvedPath = resolve(cwd, options.baseline.path);
+
+    if (options.baseline.updateBaseline) {
+      log(verbose, '[a11y-audit] Updating baseline...');
+      const allViolations = results.flatMap(r => r.result.violations);
+      saveBaseline(resolvedPath, allViolations);
+      log(verbose, `  Baseline updated: ${allViolations.length} violations across ${new Set(allViolations.map(v => v.file)).size} files`);
+      log(verbose, `  Saved to: ${options.baseline.path}`);
+      baselineUpdated = true;
+    } else if (options.baseline.enabled) {
+      log(verbose, '[a11y-audit] Loading baseline...');
+      const baseline = loadBaseline(resolvedPath);
+
+      if (baseline) {
+        const allViolations = results.flatMap(r => r.result.violations);
+        const reconciled = reconcileViolations(allViolations, baseline);
+
+        // Distribute annotated violations back to their themes
+        let offset = 0;
+        for (const themed of results) {
+          const count = themed.result.violations.length;
+          themed.result.violations = reconciled.annotated.slice(offset, offset + count);
+          offset += count;
+        }
+
+        baselineSummary = {
+          newCount: reconciled.newCount,
+          knownCount: reconciled.knownCount,
+          fixedCount: reconciled.fixedCount,
+          baselineTotal: reconciled.baselineTotal,
+        };
+        log(verbose, `  Baseline: ${reconciled.baselineTotal} total, ${reconciled.newCount} new, ${reconciled.knownCount} known, ${reconciled.fixedCount} fixed`);
+      } else {
+        log(verbose, '  ⚠ Baseline file not found — all violations treated as new');
+      }
+    }
+  }
+
   // Phase 4: Generate report
   log(verbose, '[a11y-audit] Generating report...');
   const report = format === 'json'
-    ? generateJsonReport(results)
-    : generateReport(results);
+    ? generateJsonReport(results, baselineSummary)
+    : generateReport(results, baselineSummary);
 
   // Write report to disk
   const resolvedReportDir = resolve(cwd, reportDir);
@@ -168,7 +225,7 @@ export function runAudit(options: PipelineOptions): AuditRunResult {
 
   const totalViolations = results.reduce((s, r) => s + r.result.violations.length, 0);
 
-  return { results, report, totalViolations };
+  return { results, report, totalViolations, baselineSummary, baselineUpdated };
 }
 
 /**

@@ -36,6 +36,14 @@ export const auditConfigSchema = z.object({
 
   /** Path to Tailwind palette CSS (auto-detected if not set) */
   tailwindPalette: z.string().optional(),
+
+  /** Baseline configuration for brownfield adoption */
+  baseline: z.object({
+    /** Enable baseline reconciliation */
+    enabled: z.boolean().default(false),
+    /** Path to baseline file (relative to project root) */
+    path: z.string().default('.a11y-baseline.json'),
+  }).optional(),
 });
 
 export type AuditConfigInput = z.input<typeof auditConfigSchema>;

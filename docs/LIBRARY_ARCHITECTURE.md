@@ -1,6 +1,6 @@
 # Architettura Tecnica: a11y-audit Library (v1.0)
 
-> **Ultimo aggiornamento**: 2026-02-14 | **Versione**: 1.0.0 (standalone npm package) | **~400 test TS across 18 files + 223 test Rust across 13 moduli**
+> **Ultimo aggiornamento**: 2026-02-14 | **Versione**: 1.1.0 (standalone npm package) | **~434 test TS across 23 files + 223 test Rust across 13 moduli**
 
 ---
 
@@ -232,6 +232,7 @@ a11y-audit/
     │   ├── types.ts              # ALL shared types (single source of truth)
     │   ├── color-utils.ts        # toHex(): CSS color normalization via culori
     │   ├── contrast-checker.ts   # checkAllPairs(): WCAG + APCA contrast checking
+    │   ├── baseline.ts           # generateViolationHash(), loadBaseline(), saveBaseline(), reconcileViolations()
     │   ├── pipeline.ts           # runAudit(): full pipeline orchestration
     │   ├── report/
     │   │   ├── markdown.ts       # generateReport(): Markdown audit output
@@ -240,9 +241,14 @@ a11y-audit/
     │   │       ├── markdown.test.ts
     │   │       └── json.test.ts
     │   └── __tests__/
+    │       ├── baseline.test.ts                   # Hash + reconciliation unit tests (17 tests)
+    │       ├── baseline.io.test.ts                # Baseline I/O tests with mocked fs (6 tests)
+    │       ├── baseline-integration.test.ts       # Round-trip save→load→reconcile integration (4 tests)
     │       ├── color-utils.test.ts
     │       ├── contrast-checker.test.ts
     │       ├── contrast-checker.property.test.ts  # fast-check property tests
+    │       ├── report-json.test.ts                # JSON report baseline extension tests (3 tests)
+    │       ├── report-markdown.test.ts            # Markdown report baseline extension tests (4 tests)
     │       └── integration.test.ts                # Full pipeline e2e tests
     ├── plugins/
     │   ├── interfaces.ts         # ColorResolver, FileParser, ContainerConfig, AuditConfig
@@ -1034,6 +1040,98 @@ Tutte le coppie dentro il `<div>` usano `bg-background` come sfondo, indipendent
 **Implementazione nel parser**: Il parsing delle annotazioni avviene nelle stesse sezioni di skip dei commenti (`//` e `/* */`) gia usate per `a11y-ignore`. Due regex separate distinguono `@a11y-context` (negative lookahead per `-block`) da `@a11y-context-block`. I parametri vengono estratti con `parseAnnotationParams()` che riconosce i token `bg:`, `fg:`, e `no-inherit`.
 
 **Report**: Le coppie con `contextSource === 'annotation'` sono marcate con `†` nella colonna Background del report Markdown. Una nota a pie di pagina spiega il significato del simbolo.
+
+---
+
+## 6b. Baseline/Ratchet System (Phase 2)
+
+### Scopo
+
+Il sistema di baseline consente l'adozione in progetti "brownfield" — codebase con violazioni esistenti. Traccia le violazioni note e fallisce la CI solo su **nuove** violazioni, consentendo ai team di migliorare gradualmente senza bloccarsi.
+
+### Modulo: `src/core/baseline.ts`
+
+Quattro funzioni principali:
+
+#### `generateViolationHash(violation: ContrastResult): string`
+
+Hash SHA-256 content-addressable. L'identita e composta da: `filePath::sortedBgClass::sortedFgClass::pairType::interactiveState`.
+
+- **Esclusi dal hash**: numeri di riga (per stabilita al refactoring) e theme mode (flat baseline con conteggi combinati)
+- Le classi vengono ordinate (`bg-white bg-card` → `bg-card bg-white`) per invarianza rispetto all'ordine
+
+#### `loadBaseline(path: string): BaselineData | null`
+
+Legge il file JSON della baseline. Restituisce `null` se il file non esiste o contiene JSON invalido. Non lancia eccezioni.
+
+#### `saveBaseline(path: string, violations: ContrastResult[]): void`
+
+Scrive il file baseline. Raggruppa le violazioni per file per output diff-friendly. Formato JSON:
+
+```json
+{
+  "version": "1",
+  "generatedAt": "2026-02-14T12:00:00.000Z",
+  "violations": {
+    "src/Button.tsx": { "<hash1>": 2, "<hash2>": 1 },
+    "src/Header.tsx": { "<hash3>": 1 }
+  }
+}
+```
+
+#### `reconcileViolations(violations, baseline): ReconciliationResult`
+
+Algoritmo **leaky-bucket**: per ogni hash, `min(currentCount, baselineCount)` violazioni vengono marcate come `isBaseline: true` (note), il resto come `isBaseline: false` (nuove). Preserva l'ordine di input per consentire la redistribuzione per-tema nel pipeline.
+
+```
+ReconciliationResult extends BaselineSummary {
+  annotated: ContrastResult[]   // violazioni annotate con isBaseline
+  newCount: number              // nuove violazioni (non in baseline)
+  knownCount: number            // violazioni note (in baseline)
+  fixedCount: number            // violazioni corrette (in baseline ma non piu presenti)
+  baselineTotal: number         // totale violazioni nella baseline originale
+}
+```
+
+### Integrazione nel Pipeline
+
+La riconciliazione avviene nella **Phase 3.5** — dopo il contrast checking e prima della generazione report:
+
+1. Se `--update-baseline`: salva tutte le violazioni correnti e esce con codice 0
+2. Se `baseline.enabled` e il file esiste: carica, riconcilia (flat, cross-theme), redistribuisce per tema
+3. I report includono la `BaselineSummary` (summary table + sezioni separate new/known)
+
+### Exit Code Logic
+
+| Scenario | Exit Code |
+|----------|:---------:|
+| `--update-baseline` usato | 0 |
+| Baseline attiva, nessuna nuova violazione | 0 |
+| Baseline attiva, nuove violazioni presenti | 1 |
+| `--fail-on-improvement` + violazioni ridotte | 1 (baseline stale) |
+| Nessuna baseline, nessuna violazione | 0 |
+| Nessuna baseline, violazioni presenti | 1 |
+
+### CLI Flags
+
+| Flag | Descrizione |
+|------|-------------|
+| `--update-baseline` | Genera o aggiorna il file baseline |
+| `--baseline-path <path>` | Override del path baseline (default: da config o `.a11y-baseline.json`) |
+| `--fail-on-improvement` | Fallisci CI se ci sono meno violazioni della baseline (forza update) |
+
+### Configurazione
+
+```json
+{
+  "baseline": {
+    "enabled": true,
+    "path": ".a11y-baseline.json"
+  }
+}
+```
+
+Campo opzionale nello schema Zod. Se omesso, la baseline non e attiva. Il flag `--update-baseline` attiva la baseline implicitamente anche senza `enabled: true` nella config.
 
 ---
 

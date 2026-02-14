@@ -34,4 +34,25 @@ describe('auditConfigSchema', () => {
   it('rejects invalid format', () => {
     expect(() => auditConfigSchema.parse({ format: 'xml' })).toThrow();
   });
+
+  it('defaults baseline to undefined when not provided', () => {
+    const result = auditConfigSchema.parse({});
+    expect(result.baseline).toBeUndefined();
+  });
+
+  it('accepts baseline with defaults', () => {
+    const result = auditConfigSchema.parse({ baseline: {} });
+    expect(result.baseline).toEqual({
+      enabled: false,
+      path: '.a11y-baseline.json',
+    });
+  });
+
+  it('accepts baseline with overrides', () => {
+    const result = auditConfigSchema.parse({
+      baseline: { enabled: true, path: 'custom-baseline.json' },
+    });
+    expect(result.baseline!.enabled).toBe(true);
+    expect(result.baseline!.path).toBe('custom-baseline.json');
+  });
 });

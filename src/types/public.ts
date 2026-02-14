@@ -25,4 +25,8 @@ export type {
 
   // Annotation types
   ContextOverride,
+
+  // Baseline types
+  BaselineData,
+  BaselineSummary,
 } from '../core/types.js';

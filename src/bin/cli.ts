@@ -22,6 +22,9 @@ program
   .option('--no-dark', 'Skip dark mode analysis')
   .option('--preset <name>', 'Container preset (e.g., "shadcn")')
   .option('--verbose', 'Print progress to stderr')
+  .option('--update-baseline', 'Generate or update the baseline file')
+  .option('--baseline-path <path>', 'Override baseline file path')
+  .option('--fail-on-improvement', 'Fail CI if fewer violations than baseline (forces baseline update)')
   .action(async (opts) => {
     try {
       // 1. Load config file (if any), then merge CLI flags as overrides
@@ -38,6 +41,11 @@ program
       const dark: boolean = opts.dark !== false && fileConfig.dark;
       const preset: string | undefined = (opts.preset as string | undefined) ?? fileConfig.preset;
       const verbose: boolean = opts.verbose === true;
+      const updateBaseline: boolean = opts.updateBaseline === true;
+      const failOnImprovement: boolean = opts.failOnImprovement === true;
+      const baselinePath: string =
+        (opts.baselinePath as string | undefined) ?? fileConfig.baseline?.path ?? '.a11y-baseline.json';
+      const baselineEnabled: boolean = fileConfig.baseline?.enabled ?? false;
 
       // 2. Resolve CSS file paths relative to cwd
       const resolvedCss = css.map((p: string) => resolve(cwd, p));
@@ -62,14 +70,43 @@ program
         format,
         dark,
         verbose,
+        baseline: (baselineEnabled || updateBaseline) ? {
+          enabled: baselineEnabled,
+          path: baselinePath,
+          updateBaseline,
+          failOnImprovement,
+        } : undefined,
       };
 
-      const { totalViolations } = runAudit(pipelineOpts);
+      const { totalViolations, baselineSummary, baselineUpdated } = runAudit(pipelineOpts);
 
-      if (totalViolations > 0) {
-        console.log(`[a11y-audit] ${totalViolations} total violations found.`);
-        process.exit(1);
+      if (baselineUpdated) {
+        console.log(`[a11y-audit] Baseline updated: ${totalViolations} violations baselined.`);
+        process.exit(0);
+      }
+
+      if (baselineSummary) {
+        if (failOnImprovement && totalViolations < baselineSummary.baselineTotal) {
+          console.log(
+            `[a11y-audit] Baseline is stale: ${totalViolations} current vs ${baselineSummary.baselineTotal} baselined.`,
+          );
+          console.log('[a11y-audit] Run with --update-baseline to refresh.');
+          process.exit(1);
+        }
+        if (baselineSummary.newCount > 0) {
+          console.log(
+            `[a11y-audit] ${baselineSummary.newCount} NEW violations (${baselineSummary.knownCount} baselined, ${baselineSummary.fixedCount} fixed).`,
+          );
+          process.exit(1);
+        }
+        console.log(
+          `[a11y-audit] No new violations. ${baselineSummary.knownCount} baselined, ${baselineSummary.fixedCount} fixed.`,
+        );
       } else {
+        if (totalViolations > 0) {
+          console.log(`[a11y-audit] ${totalViolations} total violations found.`);
+          process.exit(1);
+        }
         console.log('[a11y-audit] All checks passed!');
       }
     } catch (err) {
