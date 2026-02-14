@@ -11,7 +11,7 @@ A framework-agnostic static contrast audit library for WCAG 2.1 AA/AAA and APCA.
 - `docs/plans/2026-02-13-library-extraction.md` — The implementation plan (6 phases, 23 tasks). Completed. Useful as reference for design decisions.
 - `docs/LIBRARY_ARCHITECTURE.md` — Comprehensive architecture doc (in Italian) covering the current package structure, algorithms, types, and config system. **This is the canonical technical reference.**
 - `oldDoc/A11Y_AUDIT_TECHNICAL_ARCHITECTURE.md` — Architecture of the **original embedded script** (in Italian). Use as reference when porting source code from `../multicoin-frontend/scripts/a11y-audit/`. This does NOT describe the current package's architecture.
-- `docs/plans/2026-02-13-phase1-rust-core-engine.md` — Phase 1 Rust engine plan (20 tasks). Tasks 1–12 complete. Covers NAPI-RS setup, math engine, JSX parser, and pipeline integration.
+- `docs/plans/2026-02-13-phase1-rust-core-engine.md` — Phase 1 Rust engine plan (20 tasks). **All 20 tasks complete.** Covers NAPI-RS setup, math engine, JSX parser, pipeline integration, rayon parallelization, NAPI bridge, cross-validation, and benchmarking.
 
 ## Commands
 
@@ -25,13 +25,15 @@ npm run test:watch     # vitest in watch mode
 npx vitest run src/core/__tests__/contrast-checker.test.ts   # single test file
 npx vitest run -t "compositeOver"                            # single test by name
 npm run typecheck      # tsc --noEmit (strict mode)
-cd native && cargo test                        # all Rust tests
+cd native && cargo test                        # all Rust tests (~223 tests)
 cd native && cargo test -- math::wcag          # single Rust module
+npx tsx native/scripts/full_cross_validate.mts # cross-validate Rust vs TS
+npx tsx scripts/benchmark.mts --files=500      # benchmark native vs legacy
 ```
 
 ## Architecture
 
-**Ported from multicoin-frontend.** All 6 phases complete. 384 tests passing across 16 test files. Pipeline connected end-to-end.
+**Ported from multicoin-frontend.** All 6 phases complete. ~400 tests passing across 18 test files (TS) + 223 Rust tests. Hybrid Rust+JS pipeline connected end-to-end with legacy fallback.
 
 **Target architecture (Layered Onion):** pure math core → plugin interfaces (`ColorResolver`, `FileParser`, `ContainerConfig`) → config (`zod` + `lilconfig`) → CLI (`commander`). Tailwind + JSX are the first plugin implementations.
 
@@ -52,7 +54,7 @@ cd native && cargo test -- math::wcag          # single Rust module
 - `src/plugins/jsx/categorizer.ts` — Pure classification functions: `stripVariants()`, `routeClassToTarget()`, `categorizeClasses()`, `determineIsLargeText()`, `extractBalancedParens()`, `extractStringLiterals()`, `getIgnoreReasonForLine()`, `getContextOverrideForLine()`. Exports `TaggedClass`, `ClassBuckets`, `ForegroundGroup`, `PairMeta` interfaces.
 - `src/plugins/jsx/parser.ts` — JSX state machine: `extractClassRegions(source, containerMap, defaultBg)`, `isSelfClosingTag()`, `findExplicitBgInTag()`, `extractInlineStyleColors()`. Handles `@a11y-context` (single-element) and `@a11y-context-block` (block scope) annotations via context stack. The container map is injected (not imported globally).
 - `src/plugins/jsx/region-resolver.ts` — Bg/fg pairing logic: `buildEffectiveBg()`, `generatePairs()`, `resolveFileRegions()`, `extractAllFileRegions(srcPatterns, cwd, containerMap, defaultBg)`. Cross-plugin dependency: imports `resolveClassToHex` from `tailwind/css-resolver.ts`.
-- `native/` — Rust core engine (NAPI-RS), in progress
+- `native/` — Rust core engine (NAPI-RS). Phase 1 complete (20/20 tasks).
   - `native/src/types.rs` — Rust equivalents of `core/types.ts` with `#[napi(object)]` for JS interop.
   - `native/src/math/` — Color math: `hex.rs` (parseHexRGB), `composite.rs` (compositeOver), `wcag.rs` (WCAG 2.1 contrast), `apca.rs` (APCA Lc), `color_parse.rs` (toHex via csscolorparser).
   - `native/src/math/checker.rs` — `check_contrast()` + `check_all_pairs()`: full WCAG + APCA + compositing pipeline with AA/AAA threshold selection.
@@ -63,7 +65,14 @@ cd native && cargo test -- math::wcag          # single Rust module
     - `annotation_parser.rs` — `AnnotationParser`: per-element @a11y-context and a11y-ignore annotation parsing with pending/consume pattern.
     - `class_extractor.rs` — `ClassExtractor`: builder (not a visitor) that produces ClassRegion objects. Needs cross-visitor state → uses `record()` method.
     - `disabled_detector.rs` — `DisabledDetector`: US-07 native-only feature. Detects `disabled`, `aria-disabled="true"`, `disabled:` Tailwind variant.
-- `src/native/index.ts` — JS binding loader with graceful legacy fallback.
+    - `current_color_resolver.rs` — `CurrentColorResolver`: US-08 currentColor inheritance tracker. LIFO stack of text-color classes across JSX nesting.
+    - `mod.rs` — `ScanOrchestrator`: combined JsxVisitor that owns all sub-components (ContextTracker, AnnotationParser, ClassExtractor, DisabledDetector, CurrentColorResolver). `scan_file()` public entry point.
+  - `native/src/engine.rs` — `extract_and_scan()`: rayon-parallel multi-file parsing entry point. Maps file contents to `PreExtractedFile` via `par_iter()`.
+  - `native/src/lib.rs` — NAPI-RS exports: `extract_and_scan()`, `check_contrast_pairs()`, `health_check()`.
+- `src/native/index.ts` — JS binding loader with full typed API (`NativeClassRegion`, `NativePreExtractedFile`, `NativeCheckResult`). Graceful legacy fallback when `.node` not built.
+- `src/native/converter.ts` — `convertNativeResult()`: bridges flat Rust `NativeClassRegion` → nested TS `ClassRegion` (contextOverride, inlineStyles). Required because NAPI-RS flattens nested structs.
+- `native/scripts/full_cross_validate.mts` — Cross-validation script: compares Rust vs TS parser outputs and math engine results across 25+ fixtures.
+- `scripts/benchmark.mts` — Performance benchmark: measures native vs legacy parser speed with synthetic JSX files.
 
 ### Key design decisions
 
@@ -71,6 +80,10 @@ cd native && cargo test -- math::wcag          # single Rust module
 - **Alpha compositing**: Semi-transparent colors are composited against the page background before contrast calculation. Light mode uses `#ffffff`, dark mode uses `#09090b` (zinc-950).
 - **`@a11y-context` annotations**: Comment-based overrides (`// @a11y-context bg:#hex` for single element, `{/* @a11y-context-block bg:class */}` for block scope) let users correct false positives from absolute positioning, React Portals, and currentColor. Parsed in `categorizer.ts`, consumed by `parser.ts` (context stack) and `region-resolver.ts` (bg/fg override). `ContextOverride` type in `core/types.ts`; `contextSource` field on `ColorPair` tracks annotation provenance.
 - **Dual output**: tsup builds both CJS and ESM with declarations. The package uses `verbatimModuleSyntax` — always use `import type` for type-only imports.
+- **Hybrid Rust+JS pipeline**: File I/O stays in JS (glob + readFileSync); parsing moves to Rust. `pipeline.ts` auto-detects native module via `isNativeAvailable()` and falls back to TS parser. Source lines are preserved in JS for `getIgnoreReasonForLine()`.
+- **NAPI-RS flat struct bridging**: Rust `ClassRegion` has flat fields (`context_override_bg`, `inline_color`), TS nests them (`contextOverride.bg`, `inlineStyles.color`). `converter.ts` reconstructs the nested shape. NAPI-RS auto-converts snake_case → camelCase.
+- **Performance**: Native parser is ~1.7x faster than TS legacy (40-43% scan time reduction on 500-1000 file codebases). The bottleneck is NAPI-RS serialization overhead when converting ClassRegion objects across the boundary, not parsing speed. Moving contrast checking to Rust (Phase 2) would reduce round-trips and increase total pipeline savings.
+- **Native-only features**: US-07 (disabled detection) and US-08 (currentColor resolution) only run in the Rust engine. The TS legacy parser doesn't detect these.
 
 ## Testing Conventions
 
@@ -113,4 +126,5 @@ cd ../multicoin-frontend && node ../a11y-audit/dist/bin/cli.js \
 - **git commands from project root**: Always run `git add`/`git commit` from the project root, not from `native/`.
 - **Pre-staged git artifacts**: If `native/target/` or `*.node` files are in git's staging area, `.gitignore` won't protect them. Use `git rm -r --cached native/target/` to remove from tracking. Always verify `git status` before committing to avoid including build artifacts.
 - **Rust raw strings with hex colors**: `r#"..."#` breaks when content contains `"#` (e.g. hex color values in test JSX). Use `r##"..."##` for test strings containing hex colors.
-- **ClassExtractor is NOT a JsxVisitor**: Unlike other parser visitors, ClassExtractor needs cross-visitor state (ContextTracker.current_bg + AnnotationParser.take_pending_*). It's a builder with a `record()` method. Task 14 must create a combined orchestrator that coordinates state flow between visitors.
+- **ClassExtractor is NOT a JsxVisitor**: Unlike other parser visitors, ClassExtractor needs cross-visitor state (ContextTracker.current_bg + AnnotationParser.take_pending_*). It's a builder with a `record()` method. Solved by `ScanOrchestrator` in `parser/mod.rs` which owns all sub-components and coordinates state flow.
+- **ScanOrchestrator pre_tag_open_bg**: The orchestrator captures `context_tracker.current_bg()` BEFORE calling `on_tag_open` (which may push a new bg). This ensures a tag's className region gets the *parent's* bg, not its own.

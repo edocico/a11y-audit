@@ -1,6 +1,6 @@
 # Architettura Tecnica: a11y-audit Library (v1.0)
 
-> **Ultimo aggiornamento**: 2026-02-14 | **Versione**: 1.0.0 (standalone npm package) | **384 test TS across 16 files + 150 test Rust across 11 moduli**
+> **Ultimo aggiornamento**: 2026-02-14 | **Versione**: 1.0.0 (standalone npm package) | **~400 test TS across 18 files + 223 test Rust across 13 moduli**
 
 ---
 
@@ -67,18 +67,19 @@ resolve(light)    resolve(dark)   <-- risoluzione per-tema (DUE volte)
 
 `culori` gestisce il **parsing** di formati esotici (oklch con lightness percentuale, hsl con sintassi moderna, display-p3). `colord` con il plugin a11y implementa il **calcolo del contrasto** secondo la formula WCAG esatta. `apca-w3` calcola il valore APCA Lc — un algoritmo di contrasto percettivo complementare al ratio WCAG. Sono complementari: `culori` non ha `.contrast()`, `colord` non parsa oklch, e nessuna delle due implementa APCA.
 
-### Native Engine: Rust via NAPI-RS (Phase 1 — in corso)
+### Native Engine: Rust via NAPI-RS (Phase 1 — completa)
 
-**Obiettivo**: Portare lo hot path (parsing JSX + math colore) in Rust per ridurre il tempo di scansione di >70%. L'I/O e l'orchestrazione restano in TypeScript.
+**Obiettivo**: Portare lo hot path (parsing JSX + math colore) in Rust per ridurre il tempo di scansione. L'I/O e l'orchestrazione restano in TypeScript.
 
-**Approccio ibrido**: Il modulo nativo (`native/`) espone funzioni via NAPI-RS che sostituiscono le equivalenti TypeScript. Il binding JS (`src/native/index.ts`) fornisce un fallback graceful: se il modulo `.node` non e disponibile (es. piattaforma non supportata), la pipeline usa il codice TS originale.
+**Approccio ibrido**: Il modulo nativo (`native/`) espone funzioni via NAPI-RS che sostituiscono le equivalenti TypeScript. Il binding JS (`src/native/index.ts`) fornisce un fallback graceful: se il modulo `.node` non e disponibile (es. piattaforma non supportata), la pipeline usa il codice TS originale. La selezione avviene in `pipeline.ts` tramite `isNativeAvailable()`.
 
 | Componente | Linguaggio | Scopo |
 | ---------- | ---------- | ----- |
 | **Math engine** (hex, composite, wcag, apca, color_parse, checker) | Rust | Calcoli puri: parsing colori, compositing alpha, contrast ratio WCAG, APCA Lc, full contrast pipeline |
-| **Parser** (tokenizer, visitor, context_tracker, annotation_parser, class_extractor, disabled_detector) | Rust | Lexer JSX lossy con visitor pattern, context stack per background impliciti, annotation parsing, class region building, disabled element detection |
-| **Pipeline orchestration** | TypeScript | I/O disco, config loading, report generation |
-| **NAPI bridge** | Rust + JS | Conversione tipi Rust ↔ JS via `#[napi(object)]` |
+| **Parser** (tokenizer, visitor, context_tracker, annotation_parser, class_extractor, disabled_detector, current_color_resolver, ScanOrchestrator) | Rust | Lexer JSX lossy con visitor pattern, context stack per background impliciti, annotation parsing, class region building, disabled element detection, currentColor resolution |
+| **Engine** (engine.rs) | Rust | Entry point multi-file con rayon parallelizzazione (`par_iter()`) |
+| **NAPI bridge** (lib.rs + converter.ts) | Rust + JS | `extract_and_scan()`, `check_contrast_pairs()`, `health_check()` via `#[napi]`. Conversione flat Rust → nested TS in `converter.ts` |
+| **Pipeline orchestration** | TypeScript | I/O disco, config loading, report generation, native/legacy auto-detection |
 
 **Stack Rust**:
 
@@ -87,23 +88,39 @@ resolve(light)    resolve(dark)   <-- risoluzione per-tema (DUE volte)
 | `napi` + `napi-derive` | 2.x | Binding Rust ↔ Node.js (N-API v8) |
 | `serde` + `serde_json` | 1.x | Serializzazione tipi per interop JS |
 | `csscolorparser` | 0.7 | Parsing CSS colors (oklch, hsl, rgb, named) — equivalente Rust di `culori` |
+| `rayon` | 1.x | Data-parallelismo CPU per parsing multi-file |
 
-**Stato attuale (Task 1-12 di 20 completati)**:
+**Stato: Phase 1 completa (20/20 task)**:
 
-- Infrastruttura NAPI-RS funzionante con `health_check()` esposto
-- Tipi condivisi Rust equivalenti a `src/core/types.ts` con campi pre-wired per feature future (US-05, US-07, US-08, Phase 5)
+- Infrastruttura NAPI-RS funzionante con `health_check()`, `extract_and_scan()`, `check_contrast_pairs()` esposti
+- Tipi condivisi Rust equivalenti a `src/core/types.ts` con `#[napi(object)]` per interop JS
 - 6 moduli math completi: `hex`, `composite`, `wcag`, `apca`, `color_parse`, `checker`
-- 6 moduli parser completi: `visitor` (trait), `tokenizer` (lexer JSX lossy), `context_tracker` (stack contesto bg), `annotation_parser` (annotazioni per-elemento), `class_extractor` (builder ClassRegion), `disabled_detector` (US-07, native-only)
-- 150 test Rust passanti, cross-validati contro i ground truth generati dalle librerie TS (colord, apca-w3, culori)
+- 8 moduli parser completi: `visitor` (trait), `tokenizer` (lexer JSX lossy), `context_tracker` (stack contesto bg), `annotation_parser` (annotazioni per-elemento), `class_extractor` (builder ClassRegion), `disabled_detector` (US-07, native-only), `current_color_resolver` (US-08, currentColor inheritance), `mod.rs` (ScanOrchestrator)
+- Engine con rayon `par_iter()` per parsing parallelo multi-file (`engine.rs`)
+- Bridge NAPI-RS completo (`lib.rs`) con converter TS (`converter.ts`) per la ricostruzione di struct annidate
+- Pipeline integrata con auto-detection (`isNativeAvailable()`) e fallback legacy
+- 223 test Rust passanti, cross-validati contro i ground truth generati dalle librerie TS (colord, apca-w3, culori)
+- Cross-validation script (`native/scripts/full_cross_validate.mts`): 25 fixture parser + 8 math pairs verificano parita di output tra engine Rust e parser TS
+
+**Performance**:
+
+- ~1.7x piu veloce (42% riduzione tempo di scansione) misurato su 100-1000 file JSX sintetici realistici (~160 righe ciascuno)
+- Il collo di bottiglia e la serializzazione NAPI-RS: la conversione di migliaia di `ClassRegion` objects attraverso il boundary Rust↔JS aggiunge overhead significativo
+- La velocita di parsing puro in Rust e molto superiore (rayon parallelizza su tutti i core CPU), ma l'overhead di serializzazione domina per file piccoli
+- Il target di >70% non e raggiungibile con la sola migrazione del parser; spostare anche il contrast checking in Rust (Phase 2) ridurrebbe i round-trip JS↔Rust e aumenterebbe il guadagno complessivo
+- Benchmark disponibile: `npx tsx scripts/benchmark.mts --files=500`
 
 **Differenze implementative rispetto al layer TS**:
 
 - **APCA**: Usa `pow(c/255, 2.4)` (curva semplice), NON la funzione piecewise WCAG. Include il **black soft clamp** (`blkThrs=0.022`, `blkClmp=1.414`) essenziale per accuratezza su colori scuri
 - **Color parsing**: `csscolorparser` gestisce oklch nativamente (nessun workaround necessario, a differenza di quanto previsto nel piano)
 - **WCAG contrast**: Implementazione diretta della formula W3C con linearizzazione piecewise sRGB (`soglia 0.04045`)
-- **ClassExtractor come builder (non visitor)**: In TS, la costruzione di `ClassRegion` avviene dentro la state machine del parser. In Rust, il borrow checker impedisce a un visitor di accedere allo stato di altri visitor nella stessa slice `&mut [&mut dyn JsxVisitor]`. Soluzione: `ClassExtractor` e un **builder** con metodo `record()` che riceve il contesto gia estratto (bg, override, ignore) dall'orchestratore (Task 14). Non implementa `JsxVisitor`.
+- **ClassExtractor come builder (non visitor)**: In TS, la costruzione di `ClassRegion` avviene dentro la state machine del parser. In Rust, il borrow checker impedisce a un visitor di accedere allo stato di altri visitor nella stessa slice `&mut [&mut dyn JsxVisitor]`. Soluzione: `ClassExtractor` e un **builder** con metodo `record()` che riceve il contesto gia estratto (bg, override, ignore) dall'orchestratore. Non implementa `JsxVisitor`.
+- **ScanOrchestrator** (`parser/mod.rs`): Possiede tutti i sub-componenti (ContextTracker, AnnotationParser, ClassExtractor, DisabledDetector, CurrentColorResolver) e coordina il flusso di stato tra di essi. Cattura `context_tracker.current_bg()` **prima** di `on_tag_open` per dare ai figli il bg del parent, non il proprio. Entry point pubblico: `scan_file()`.
 - **DisabledDetector (US-07, native-only)**: Feature non presente nel parser TS. Rileva `disabled`, `disabled={true}`, `aria-disabled="true"` nelle tag JSX. Rileva anche il variant Tailwind `disabled:` nelle classi. Gli elementi disabilitati sono esclusi dal contrast checking (WCAG 2.1 SC 1.4.3 non si applica a componenti UI inattivi).
+- **CurrentColorResolver (US-08, native-only)**: Tracker LIFO delle classi `text-*` attraverso il nesting JSX. Quando un elemento ha `border-current` o `ring-current`, il resolver inietta la classe text-color del parent come colore effettivo. Nel TS, `currentColor` non viene risolto (segnalato come skipped).
 - **AnnotationParser**: Port di `getContextOverrideForLine()` e `getIgnoreReasonForLine()` da `categorizer.ts`. Usa semantica consume-once (`.take()`) per le annotazioni pending. Ignora `@a11y-context-block` (gestito da `ContextTracker`).
+- **Propagazione bg esplicito**: Il Rust `ContextTracker` rileva classi `bg-*` esplicite sui tag parent e le propaga come `contextBg` ai figli. Il parser TS traccia solo i container configurati nel preset. Questo e un miglioramento intenzionale del native engine (cross-validato come "known native improvement").
 
 ### Architettura a Strati (Layered Onion)
 
@@ -136,9 +153,15 @@ resolve(light)    resolve(dark)   <-- risoluzione per-tema (DUE volte)
         v
 +---------------------------------------------------------------+
 |              Native Engine (Rust + NAPI-RS)                    |
-|  native/src/math/ — hex, composite, wcag, apca, color_parse  |
-|  native/src/types.rs — tipi condivisi Rust                    |
+|  native/src/math/ — hex, composite, wcag, apca, color_parse, |
+|                      checker (full contrast pipeline)         |
+|  native/src/parser/ — tokenizer, visitors, ScanOrchestrator   |
+|  native/src/engine.rs — rayon par_iter() multi-file parsing   |
+|  native/src/lib.rs — NAPI exports: extract_and_scan(),        |
+|                       check_contrast_pairs(), health_check()  |
+|  native/src/types.rs — tipi condivisi Rust (#[napi(object)])  |
 |  src/native/index.ts — JS binding loader con fallback         |
+|  src/native/converter.ts — flat Rust → nested TS bridging     |
 +---------------------------------------------------------------+
 ```
 
@@ -150,6 +173,8 @@ Il codice puro (contrast-checker, color-utils) non ha dipendenze da I/O ne da fr
 
 ```
 a11y-audit/
+├── scripts/
+│   └── benchmark.mts             # Performance benchmark: native Rust vs TS legacy parser
 ├── package.json                  # name: "a11y-audit", bin: "a11y-audit"
 ├── tsup.config.ts                # Build: CJS + ESM + .d.ts
 ├── tsconfig.json                 # strict: noUncheckedIndexedAccess, verbatimModuleSyntax
@@ -159,12 +184,13 @@ a11y-audit/
 │   ├── index.cjs                 # CJS entry
 │   ├── index.d.ts                # Bundled type declarations
 │   └── bin/cli.js                # Compiled CLI binary
-├── native/                       # Rust native engine (NAPI-RS)
-│   ├── Cargo.toml                # Crate config: napi, serde, csscolorparser
+├── native/                       # Rust native engine (NAPI-RS) — Phase 1 completa
+│   ├── Cargo.toml                # Crate config: napi, serde, csscolorparser, rayon
 │   ├── build.rs                  # NAPI build script
 │   ├── src/
-│   │   ├── lib.rs                # Root: health_check(), mod declarations
+│   │   ├── lib.rs                # NAPI exports: extract_and_scan(), check_contrast_pairs(), health_check()
 │   │   ├── types.rs              # Rust equivalents of core/types.ts (#[napi(object)])
+│   │   ├── engine.rs             # extract_and_scan() — rayon par_iter() multi-file parsing entry point
 │   │   ├── math/
 │   │   │   ├── mod.rs            # Module declarations
 │   │   │   ├── hex.rs            # parse_hex_rgb(), extract_hex_alpha(), strip_hex_alpha()
@@ -174,13 +200,16 @@ a11y-audit/
 │   │   │   ├── color_parse.rs    # to_hex() — CSS color → hex via csscolorparser
 │   │   │   └── checker.rs        # check_contrast(), check_all_pairs() — pipeline completa
 │   │   └── parser/
-│   │       ├── mod.rs            # Module declarations
+│   │       ├── mod.rs            # ScanOrchestrator — combined visitor, scan_file() entry point
 │   │       ├── visitor.rs        # JsxVisitor trait (on_tag_open, on_tag_close, on_comment, on_class_attribute)
 │   │       ├── tokenizer.rs      # scan_jsx() — lexer JSX lossy, className extraction, cn()/clsx()/cva()
 │   │       ├── context_tracker.rs # ContextTracker — LIFO stack bg impliciti, @a11y-context-block
 │   │       ├── annotation_parser.rs # AnnotationParser — @a11y-context e a11y-ignore per-elemento
 │   │       ├── class_extractor.rs   # ClassExtractor — builder ClassRegion con inline style extraction
-│   │       └── disabled_detector.rs # DisabledDetector — US-07 disabled/aria-disabled detection (native-only)
+│   │       ├── disabled_detector.rs # DisabledDetector — US-07 disabled/aria-disabled detection (native-only)
+│   │       └── current_color_resolver.rs # CurrentColorResolver — US-08 currentColor inheritance (native-only)
+│   ├── scripts/
+│   │   └── full_cross_validate.mts  # Cross-validation: 25 parser + 8 math fixtures (Rust vs TS)
 │   └── tests/
 │       └── fixtures/             # Ground truth JSON per cross-validation
 │           ├── colord_ratios.json    # 8 WCAG ratio pairs (da colord)
@@ -189,7 +218,8 @@ a11y-audit/
 └── src/
     ├── index.ts                  # Public API re-exports
     ├── native/
-    │   └── index.ts              # JS binding loader: isNativeAvailable(), getNativeModule()
+    │   ├── index.ts              # JS binding loader: isNativeAvailable(), getNativeModule()
+    │   └── converter.ts          # convertNativeResult(): flat Rust → nested TS ClassRegion bridging
     ├── bin/
     │   └── cli.ts                # Commander-based CLI entry point
     ├── config/
@@ -398,9 +428,12 @@ console.log(`Violations: ${totalViolations}`);
                                      │
                                      ▼
 ┌───────────┐    ┌───────────────────────────────────────────┐
-│ Phase 1   │    │       extractAllFileRegions()              │
-│ Extract   │───>│  jsx/parser.ts (state machine)             │
-│ (1 volta) │    │  Input: src glob patterns                  │
+│ Phase 1   │    │  isNativeAvailable()?                      │
+│ Extract   │───>│  YES → extractWithNativeEngine()           │
+│ (1 volta) │    │         Rust engine.rs (rayon par_iter)    │
+│           │    │         + converter.ts (flat→nested)       │
+│           │    │  NO  → extractAllFileRegions()             │
+│           │    │         jsx/parser.ts (TS state machine)   │
 │           │    │  Output: PreExtracted { files, readErrors } │
 └───────────┘    └───────────────────┬───────────────────────┘
                                      │
@@ -1242,7 +1275,7 @@ Se Tailwind aggiunge nuove utility con prefisso ambiguo e il report mostra "Unre
 
 ## 9. Testing
 
-### Struttura (384 test TS across 16 file + 150 test Rust across 11 moduli)
+### Struttura (~400 test TS across 18 file + 223 test Rust across 13 moduli)
 
 Il test suite e organizzato in quattro livelli (TS) piu i test Rust:
 
@@ -1279,7 +1312,7 @@ src/plugins/jsx/__tests__/
   region-resolver.io.test.ts           # extractAllFileRegions con vi.mock('node:fs', 'glob')
 ```
 
-**Test Rust** (150 test, `cargo test` dalla directory `native/`):
+**Test Rust** (223 test, `cargo test` dalla directory `native/`):
 
 ```text
 native/src/math/
@@ -1296,9 +1329,16 @@ native/src/parser/
   annotation_parser.rs # 14 test: @a11y-context parsing, a11y-ignore, pending consume-once, block skip
   class_extractor.rs   # 19 test: ClassRegion building, context overrides, inline style extraction
   disabled_detector.rs # 20 test: disabled/aria-disabled detection, disabled: variant, false negatives
+  current_color_resolver.rs # 17 test: currentColor LIFO stack, text-* inheritance, border-current resolution
+  mod.rs (ScanOrchestrator) # 50 test: full orchestration, multi-visitor coordination, scan_file() integration
+
+native/src/
+  engine.rs         # 6 test: extract_and_scan (single file, multi-file parallel, containers, stress test)
 ```
 
 I test Rust usano un approccio **cross-validation**: i valori ground truth sono generati dalle librerie TS (`colord`, `apca-w3`, `culori`) e salvati come fixture JSON in `native/tests/fixtures/`. I test Rust verificano che l'output corrisponda entro tolleranze definite (±1 per canale RGB, ±1.0 per APCA Lc).
+
+**Cross-validation end-to-end** (`native/scripts/full_cross_validate.mts`): Oltre ai test unitari Rust, uno script TypeScript esegue 25 fixture JSX attraverso entrambi gli engine (Rust `extractAndScan()` e TS `extractClassRegions()`) e confronta i risultati. Copre className statici, cn()/clsx(), template literal, container context, annotazioni @a11y-context, fragment, varianti, elementi disabilitati. 3 fixture mostrano miglioramenti intenzionali del native engine (propagazione bg esplicito dai parent tag). Lo script include anche 8 test di parita matematica (WCAG contrast ratio ±0.05, APCA Lc ±2.0).
 
 ### Convenzioni
 
@@ -1318,11 +1358,15 @@ npx vitest run -t "compositeOver"                            # singolo test per 
 npm run typecheck         # tsc --noEmit (strict mode)
 
 # Rust native engine
-cd native && cargo test                    # tutti i 150 test Rust
+cd native && cargo test                    # tutti i 223 test Rust
 cd native && cargo test math::apca         # singolo modulo math
 cd native && cargo test parser::tokenizer  # singolo modulo parser
 cd native && cargo build                   # debug build → target/debug/
 npm run build:native                       # release build → *.node
+
+# Cross-validation e benchmark
+npx tsx native/scripts/full_cross_validate.mts   # 25 parser + 8 math cross-validation
+npx tsx scripts/benchmark.mts --files=500        # performance benchmark (native vs legacy)
 ```
 
 ---
@@ -1506,7 +1550,11 @@ A: Si. Usa `// @a11y-context bg:#09090b fg:text-white`. L'override `fg:` sostitu
 | **`@a11y-context-block`** | Annotazione comment-based che sovrascrive il contesto bg per tutti i figli di un blocco (push sul context stack) |
 | **Preset** | Set predefinito di container contexts (es. `shadcn` = 21 componenti) |
 | **Pipeline** | Sequenza di 5 fasi: config → bootstrap → extract → resolve → report |
-| **Native Engine** | Modulo Rust compilato via NAPI-RS che sostituisce gli hot path TS (math + parser) |
+| **Native Engine** | Modulo Rust compilato via NAPI-RS che sostituisce gli hot path TS (math + parser). Phase 1 completa: ~1.7x speedup |
 | **NAPI-RS** | Framework per esporre funzioni Rust a Node.js tramite N-API. `#[napi]` per funzioni, `#[napi(object)]` per struct |
+| **ScanOrchestrator** | Componente centrale del parser Rust che possiede tutti i sub-visitor e coordina il flusso di stato tra ContextTracker, AnnotationParser, ClassExtractor, DisabledDetector, e CurrentColorResolver |
+| **CurrentColorResolver** | Tracker LIFO (US-08, native-only) delle classi `text-*` attraverso il nesting JSX per risolvere `border-current`/`ring-current` |
+| **DisabledDetector** | Detector (US-07, native-only) di elementi UI disabilitati (`disabled`, `aria-disabled`, `disabled:` variant) esclusi dal contrast checking |
 | **Black soft clamp** | Operazione APCA che aggiunge luminanza ai colori molto scuri (`Y < 0.022`) per evitare artefatti nel calcolo Lc |
-| **Cross-validation** | Approccio di test: ground truth generati dalle librerie TS, verificati contro l'implementazione Rust |
+| **Cross-validation** | Approccio di test: ground truth generati dalle librerie TS, verificati contro l'implementazione Rust. Include sia fixture JSON unitarie che script end-to-end (25 parser + 8 math) |
+| **Rayon** | Crate Rust per data-parallelismo CPU. Usato in `engine.rs` per parsare file in parallelo via `par_iter()` |

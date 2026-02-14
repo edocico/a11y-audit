@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use rayon::prelude::*;
 
-use crate::types::{ExtractOptions, PreExtractedFile};
+use crate::types::{ContainerEntry, ExtractOptions, FileInput, PreExtractedFile};
 
 /// Parse multiple JSX files in parallel and return extracted ClassRegion data.
 ///
