@@ -12,6 +12,7 @@ A framework-agnostic static contrast audit library for WCAG 2.1 AA/AAA and APCA.
 - `docs/LIBRARY_ARCHITECTURE.md` — Comprehensive architecture doc (in Italian) covering the current package structure, algorithms, types, and config system. **This is the canonical technical reference.**
 - `oldDoc/A11Y_AUDIT_TECHNICAL_ARCHITECTURE.md` — Architecture of the **original embedded script** (in Italian). Use as reference when porting source code from `../multicoin-frontend/scripts/a11y-audit/`. This does NOT describe the current package's architecture.
 - `docs/plans/2026-02-13-phase1-rust-core-engine.md` — Phase 1 Rust engine plan (20 tasks). **All 20 tasks complete.** Covers NAPI-RS setup, math engine, JSX parser, pipeline integration, rayon parallelization, NAPI bridge, cross-validation, and benchmarking.
+- `docs/plans/2026-02-14-phase2-baseline-ratchet.md` — Phase 2 Baseline/Ratchet plan (10 tasks). **All 10 tasks complete.** Covers hash generation, load/save, reconciliation, config, pipeline integration, CLI flags, report extensions, E2E tests.
 
 ## Commands
 
@@ -33,7 +34,7 @@ npx tsx scripts/benchmark.mts --files=500      # benchmark native vs legacy
 
 ## Architecture
 
-**Ported from multicoin-frontend.** All 6 phases complete. ~400 tests passing across 18 test files (TS) + 223 Rust tests. Hybrid Rust+JS pipeline connected end-to-end with legacy fallback.
+**Ported from multicoin-frontend.** All 6 phases complete. ~434 tests passing across 23 test files (TS) + 223 Rust tests. Hybrid Rust+JS pipeline connected end-to-end with legacy fallback. Phase 2 (Baseline/Ratchet) complete.
 
 **Target architecture (Layered Onion):** pure math core → plugin interfaces (`ColorResolver`, `FileParser`, `ContainerConfig`) → config (`zod` + `lilconfig`) → CLI (`commander`). Tailwind + JSX are the first plugin implementations.
 
@@ -43,9 +44,10 @@ npx tsx scripts/benchmark.mts --files=500      # benchmark native vs legacy
 - `src/core/color-utils.ts` — `toHex()`: normalizes any CSS color (oklch, hsl, rgb, display-p3, hex) to 6- or 8-digit hex. Uses `culori` for parsing.
 - `src/core/contrast-checker.ts` — `checkAllPairs()`: WCAG contrast checking with alpha compositing, APCA Lc calculation, AA/AAA level selection, and `// a11y-ignore` suppression. Uses `colord` for contrast ratios and `apca-w3` for APCA.
 - `src/bin/cli.ts` — Commander-based CLI: loads config via `lilconfig`, merges CLI flags, runs pipeline.
-- `src/core/pipeline.ts` — `runAudit()`: orchestrates extract-once/resolve-twice flow, writes reports to disk.
-- `src/core/report/json.ts` — `generateJsonReport()`: structured JSON output with summary + per-theme data.
-- `src/core/report/markdown.ts` — `generateReport()`: Markdown audit reports grouped by file, SC 1.4.3/1.4.11 separation, APCA support.
+- `src/core/baseline.ts` — Baseline/ratchet system: `generateViolationHash()` (SHA-256 content-addressable), `loadBaseline()`, `saveBaseline()`, `reconcileViolations()` (leaky-bucket algorithm). No line numbers or theme mode in hash for refactoring stability.
+- `src/core/pipeline.ts` — `runAudit()`: orchestrates extract-once/resolve-twice flow, baseline reconciliation (Phase 3.5), writes reports to disk.
+- `src/core/report/json.ts` — `generateJsonReport()`: structured JSON output with summary + per-theme data. Optional `baselineSummary` parameter adds new/known/fixed counts.
+- `src/core/report/markdown.ts` — `generateReport()`: Markdown audit reports grouped by file, SC 1.4.3/1.4.11 separation, APCA support. With baseline: splits violations into "New" vs collapsible "Baseline" sections.
 - `src/plugins/interfaces.ts` — Plugin contracts: `ColorResolver`, `FileParser`, `ContainerConfig`, `AuditConfig`.
 - `src/config/schema.ts` — Zod schema `auditConfigSchema` with defaults; `loader.ts` uses `lilconfig`.
 - `src/plugins/tailwind/css-resolver.ts` — CSS variable resolution: `buildThemeColorMaps()`, `resolveClassToHex()`, balanced-brace parsing, alpha compositing helpers.
@@ -106,6 +108,18 @@ The project uses a strict tsconfig: `noUncheckedIndexedAccess`, `noUnusedLocals`
 cd ../multicoin-frontend && node ../a11y-audit/dist/bin/cli.js \
   --src 'src/**/*.tsx' --css src/main.theme.css src/main.css \
   --preset shadcn --report-dir /tmp/a11y-test-report --verbose
+
+# Generate baseline from current violations
+node dist/bin/cli.js --update-baseline --verbose
+
+# Run audit with baseline (only new violations fail CI)
+node dist/bin/cli.js --verbose  # uses baseline.enabled from config
+
+# Fail CI if violations improved (forces baseline refresh)
+node dist/bin/cli.js --fail-on-improvement --verbose
+
+# Custom baseline path
+node dist/bin/cli.js --baseline-path custom-baseline.json --verbose
 ```
 
 ## Mandatory Workflow Rules
