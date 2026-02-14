@@ -28,6 +28,9 @@ pub fn parse_opacity_class(cls: &str) -> Option<f32> {
 
         // Float literal: opacity-[.33] or opacity-[0.33]
         let val: f32 = inner.parse().ok()?;
+        if val < 0.0 || val > 1.0 {
+            return None;
+        }
         return Some(val);
     }
 
@@ -207,6 +210,16 @@ mod tests {
     #[test]
     fn arbitrary_percentage_100() {
         assert_eq!(parse_opacity_class("opacity-[100%]"), Some(1.0));
+    }
+
+    #[test]
+    fn arbitrary_above_one_rejected() {
+        assert_eq!(parse_opacity_class("opacity-[1.5]"), None);
+    }
+
+    #[test]
+    fn arbitrary_negative_rejected() {
+        assert_eq!(parse_opacity_class("opacity-[-0.5]"), None);
     }
 
     // ── find_opacity_in_raw_tag tests ──

@@ -25,7 +25,7 @@ pub struct ContextTracker {
     container_config: HashMap<String, String>,
     /// Default background class (e.g. "bg-background")
     default_bg: String,
-    /// LIFO stack: (tag_name, bg_class, is_annotation)
+    /// LIFO stack: (tag_name, bg_class, is_annotation, cumulative_opacity)
     stack: Vec<StackEntry>,
     /// Pending @a11y-context-block annotation to apply on next tag open
     pending_block_override: Option<String>,
@@ -458,5 +458,39 @@ mod tests {
         tracker.on_tag_open("div", false, r##"<div className="opacity-50">"##);
         assert_eq!(tracker.current_bg(), "bg-card"); // inherited from Card
         assert_eq!(tracker.current_opacity(), 0.5);
+    }
+
+    #[test]
+    fn annotation_block_with_opacity() {
+        let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        tracker.on_tag_open("div", false, r##"<div className="opacity-50">"##);
+        tracker.on_comment(" @a11y-context-block bg:bg-slate-900", 1);
+        tracker.resolve_pending_block("section", false);
+        tracker.on_tag_open("section", false, "<section>");
+        assert_eq!(tracker.current_bg(), "bg-slate-900");
+        assert_eq!(tracker.current_opacity(), 0.5); // inherits parent opacity
+    }
+
+    #[test]
+    fn explicit_bg_with_opacity() {
+        let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        tracker.on_tag_open("div", false, r##"<div className="bg-red-500 opacity-75">"##);
+        assert_eq!(tracker.current_bg(), "bg-red-500");
+        assert_eq!(tracker.current_opacity(), 0.75);
+    }
+
+    #[test]
+    fn deeply_nested_opacity_three_levels() {
+        let mut tracker = ContextTracker::new(make_config(), "bg-background".to_string());
+        tracker.on_tag_open("div", false, r##"<div className="opacity-50">"##);
+        tracker.on_tag_open("div", false, r##"<div className="opacity-50">"##);
+        tracker.on_tag_open("div", false, r##"<div className="opacity-50">"##);
+        assert!((tracker.current_opacity() - 0.125).abs() < 0.001); // 0.5^3
+        tracker.on_tag_close("div");
+        assert!((tracker.current_opacity() - 0.25).abs() < 0.001); // 0.5^2
+        tracker.on_tag_close("div");
+        assert_eq!(tracker.current_opacity(), 0.5);
+        tracker.on_tag_close("div");
+        assert_eq!(tracker.current_opacity(), 1.0);
     }
 }
