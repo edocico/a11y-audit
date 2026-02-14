@@ -27,6 +27,7 @@ describe('native pipeline integration', () => {
                     },
                 ],
                 containerConfig: [],
+                portalConfig: [],
                 defaultBg: 'bg-background',
             });
 
@@ -69,6 +70,7 @@ describe('native pipeline integration', () => {
                     },
                 ],
                 containerConfig: [],
+                portalConfig: [],
                 defaultBg: 'bg-background',
             });
 
@@ -106,6 +108,7 @@ describe('native pipeline integration', () => {
                     },
                 ],
                 containerConfig: [],
+                portalConfig: [],
                 defaultBg: 'bg-background',
             });
 
@@ -145,6 +148,7 @@ describe('native pipeline integration', () => {
                     },
                 ],
                 containerConfig: [],
+                portalConfig: [],
                 defaultBg: 'bg-background',
             });
 
@@ -186,6 +190,7 @@ describe('native pipeline integration', () => {
                     },
                 ],
                 containerConfig: [{ component: 'Card', bgClass: 'bg-card' }],
+                portalConfig: [],
                 defaultBg: 'bg-background',
             });
 

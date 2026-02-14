@@ -269,9 +269,14 @@ function extractWithNativeEngine(
     ([component, bgClass]) => ({ component, bgClass }),
   );
 
+  const portalEntries = Array.from(containerConfig.portals.entries()).map(
+    ([component, bgClass]) => ({ component, bgClass }),
+  );
+
   const nativeResult = getNativeModule().extractAndScan({
     fileContents,
     containerConfig: containerEntries,
+    portalConfig: portalEntries,
     defaultBg: containerConfig.defaultBg,
   });
 

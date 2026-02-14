@@ -33,6 +33,7 @@ interface NativeModule {
     extractAndScan(options: {
         fileContents: Array<{ path: string; content: string }>;
         containerConfig: Array<{ component: string; bgClass: string }>;
+        portalConfig: Array<{ component: string; bgClass: string }>;
         defaultBg: string;
     }): NativePreExtractedFile[];
     checkContrastPairs(

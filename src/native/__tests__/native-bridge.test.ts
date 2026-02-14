@@ -29,6 +29,7 @@ describe('native bridge', () => {
                 },
             ],
             containerConfig: [],
+            portalConfig: [],
             defaultBg: 'bg-background',
         });
         expect(result).toHaveLength(1);
@@ -48,6 +49,7 @@ describe('native bridge', () => {
                 },
             ],
             containerConfig: [{ component: 'Card', bgClass: 'bg-card' }],
+            portalConfig: [],
             defaultBg: 'bg-background',
         });
         expect(result[0]!.regions[0]!.contextBg).toBe('bg-card');
@@ -67,6 +69,7 @@ describe('native bridge', () => {
                 },
             ],
             containerConfig: [],
+            portalConfig: [],
             defaultBg: 'bg-background',
         });
         expect(result).toHaveLength(2);
@@ -83,6 +86,7 @@ describe('native bridge', () => {
                 },
             ],
             containerConfig: [],
+            portalConfig: [],
             defaultBg: 'bg-background',
         });
         expect(result[0]!.regions[0]!.contextOverrideBg).toBe('#09090b');
@@ -99,6 +103,7 @@ describe('native bridge', () => {
                 },
             ],
             containerConfig: [],
+            portalConfig: [],
             defaultBg: 'bg-background',
         });
         expect(result[0]!.regions[0]!.ignored).toBe(true);
