@@ -25,6 +25,7 @@ const nativeModule = require('../../native/a11y-audit-native.node') as {
   extractAndScan(options: {
     fileContents: Array<{ path: string; content: string }>;
     containerConfig: Array<{ component: string; bgClass: string }>;
+    portalConfig: Array<{ component: string; bgClass: string }>;
     defaultBg: string;
   }): Array<{ path: string; regions: NativeClassRegion[] }>;
   checkContrastPairs(
@@ -73,6 +74,10 @@ interface Fixture {
   name: string;
   source: string;
   containers?: boolean;
+  /** US-04: Portal config for this fixture */
+  portals?: Record<string, string>;
+  /** Expected: TS legacy doesn't support portals, native does. Mark as native-only improvement. */
+  nativeOnly?: boolean;
 }
 
 const FIXTURES: Fixture[] = [
@@ -224,6 +229,27 @@ const FIXTURES: Fixture[] = [
     name: 'opacity-0 invisible',
     source: '<div className="opacity-0"><span className="text-white">x</span></div>',
   },
+  // US-04: Portal fixtures — native resets context at portal boundary, TS doesn't.
+  // These are native-only improvements: TS legacy parser treats portals as unknown tags.
+  {
+    name: 'portal resets context',
+    source: `<Card><DialogContent><span className="text-white">x</span></DialogContent></Card>`,
+    containers: true,
+    portals: { DialogContent: 'reset' },
+    nativeOnly: true,
+  },
+  {
+    name: 'portal with overlay bg',
+    source: `<DialogOverlay><span className="text-white">x</span></DialogOverlay>`,
+    portals: { DialogOverlay: 'bg-black/80' },
+    nativeOnly: true,
+  },
+  {
+    name: 'portal + opacity interaction',
+    source: `<div className="opacity-50"><DialogContent><span className="text-white">x</span></DialogContent></div>`,
+    portals: { DialogContent: 'reset' },
+    nativeOnly: true,
+  },
 ];
 
 // ── Comparison Logic ────────────────────────────────────────────────
@@ -324,6 +350,31 @@ for (const fixture of FIXTURES) {
   const containerMap = fixture.containers ? CONTAINER_MAP : new Map<string, string>();
   const containerEntries = fixture.containers ? CONTAINER_ENTRIES : [];
 
+  const portalEntries = fixture.portals
+    ? Object.entries(fixture.portals).map(([component, bgClass]) => ({ component, bgClass }))
+    : [];
+
+  // Native-only fixtures: skip TS comparison, just verify native produces results
+  if (fixture.nativeOnly) {
+    const nativeResult = nativeModule.extractAndScan({
+      fileContents: [{ path: 'test.tsx', content: fixture.source }],
+      containerConfig: containerEntries,
+      portalConfig: portalEntries,
+      defaultBg: DEFAULT_BG,
+    });
+    const nativeRegions = nativeResult[0]?.regions ?? [];
+    if (nativeRegions.length > 0) {
+      nativeOnlyExtra += nativeRegions.length;
+      passed++;
+      console.log(`  [NATIVE-ONLY] ${fixture.name} (${nativeRegions.length} native regions)`);
+    } else {
+      failed++;
+      failures.push({ name: fixture.name, issue: 'Native-only fixture produced 0 regions' });
+      console.log(`  [FAIL] ${fixture.name}: native-only fixture produced 0 regions`);
+    }
+    continue;
+  }
+
   // TS path
   const tsRegions = extractClassRegions(fixture.source, containerMap, DEFAULT_BG);
   const tsNormalized = tsRegions.map(normalizeTsRegion);
@@ -332,6 +383,7 @@ for (const fixture of FIXTURES) {
   const nativeResult = nativeModule.extractAndScan({
     fileContents: [{ path: 'test.tsx', content: fixture.source }],
     containerConfig: containerEntries,
+    portalConfig: portalEntries,
     defaultBg: DEFAULT_BG,
   });
   const nativeRegions = nativeResult[0]?.regions ?? [];

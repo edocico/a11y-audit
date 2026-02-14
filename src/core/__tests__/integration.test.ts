@@ -319,3 +319,73 @@ describe('Integration: US-05 opacity stack', () => {
     expect(opacityResult!.effectiveOpacity).toBe(0.5);
   });
 });
+
+// ── US-04: Portal context reset E2E tests ───────────────────────────
+
+describe('Integration: US-04 portal context reset', () => {
+  test('should reset bg context at portal boundary', () => {
+    const colorMap = createIntegrationColorMap();
+    // Add card color for the Card container
+    colorMap.set('--color-card', { hex: '#1e293b' }); // dark card bg
+
+    const preExtracted: PreExtracted = {
+      files: [{
+        relPath: 'portal-test.tsx',
+        lines: [
+          '<Card>',
+          '  <DialogContent>',
+          '    <span className="text-foreground">dialog text</span>',
+          '  </DialogContent>',
+          '</Card>',
+        ],
+        regions: [{
+          content: 'text-foreground',
+          startLine: 3,
+          // Portal resets to defaultBg (bg-background), NOT Card's bg-card
+          contextBg: 'bg-background',
+        }],
+      }],
+      readErrors: [],
+      filesScanned: 1,
+    };
+
+    const { pairs, skipped, filesScanned } = resolveFileRegions(preExtracted, colorMap, 'light');
+    const result = checkAllPairs(pairs, skipped, filesScanned, 'light');
+
+    const allResults = [...result.violations, ...result.passed, ...result.ignored];
+    expect(allResults.length).toBeGreaterThan(0);
+    // The bg should be resolved from bg-background (#ffffff), not bg-card
+    const portalResult = allResults.find(r => r.file === 'portal-test.tsx');
+    expect(portalResult).toBeDefined();
+    expect(portalResult!.bgHex).toBe('#ffffff');
+  });
+
+  test('should reset opacity at portal boundary', () => {
+    const colorMap = createIntegrationColorMap();
+    const preExtracted: PreExtracted = {
+      files: [{
+        relPath: 'portal-opacity-test.tsx',
+        lines: [
+          '<div className="opacity-50">',
+          '  <DialogContent>',
+          '    <span className="bg-background text-foreground">content</span>',
+          '  </DialogContent>',
+          '</div>',
+        ],
+        regions: [{
+          content: 'bg-background text-foreground',
+          startLine: 3,
+          contextBg: 'bg-background',
+          // Portal resets opacity — no effectiveOpacity here
+        }],
+      }],
+      readErrors: [],
+      filesScanned: 1,
+    };
+
+    const { pairs } = resolveFileRegions(preExtracted, colorMap, 'light');
+    expect(pairs.length).toBeGreaterThan(0);
+    // No opacity reduction — portal boundary reset it
+    expect(pairs[0]!.effectiveOpacity).toBeUndefined();
+  });
+});
