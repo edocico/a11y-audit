@@ -1,12 +1,16 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
-import type { AuditResult, ThemeMode } from './types.js';
+import { globSync } from 'glob';
+import type { AuditResult, SkippedClass, ThemeMode } from './types.js';
 import type { ContainerConfig } from '../plugins/interfaces.js';
 import { buildThemeColorMaps, type TailwindResolverOptions } from '../plugins/tailwind/css-resolver.js';
 import { extractAllFileRegions, resolveFileRegions } from '../plugins/jsx/region-resolver.js';
+import type { PreExtracted } from '../plugins/jsx/region-resolver.js';
 import { checkAllPairs } from './contrast-checker.js';
 import { generateReport } from './report/markdown.js';
 import { generateJsonReport } from './report/json.js';
+import { isNativeAvailable, getNativeModule } from '../native/index.js';
+import { convertNativeResult } from '../native/converter.js';
 
 const MAX_REPORT_COUNTER = 100;
 
@@ -110,13 +114,21 @@ export function runAudit(options: PipelineOptions): AuditRunResult {
   log(verbose, `  Dark map:  ${darkMap.size} resolved colors`);
 
   // Phase 1: Extract once (theme-agnostic file I/O + state machine parsing)
-  log(verbose, '[a11y-audit] Extracting file regions...');
-  const preExtracted = extractAllFileRegions(
-    src,
-    cwd,
-    containerConfig.containers,
-    containerConfig.defaultBg,
-  );
+  let preExtracted: PreExtracted;
+
+  if (isNativeAvailable()) {
+    log(verbose, '[a11y-audit] Extracting file regions (native Rust engine)...');
+    preExtracted = extractWithNativeEngine(src, cwd, containerConfig, verbose);
+  } else {
+    log(verbose, '[a11y-audit] Extracting file regions (legacy TypeScript engine)...');
+    log(verbose, '  ⚠ Native module not available. Disabled detection (US-07) and currentColor resolution (US-08) will be skipped.');
+    preExtracted = extractAllFileRegions(
+      src,
+      cwd,
+      containerConfig.containers,
+      containerConfig.defaultBg,
+    );
+  }
   log(verbose, `  ${preExtracted.filesScanned} files scanned`);
 
   // Phase 2+3: Resolve per theme + check contrast
@@ -157,4 +169,54 @@ export function runAudit(options: PipelineOptions): AuditRunResult {
   const totalViolations = results.reduce((s, r) => s + r.result.violations.length, 0);
 
   return { results, report, totalViolations };
+}
+
+/**
+ * Reads files via glob + readFileSync, then passes content to the Rust
+ * native engine for parallel parsing. Converts the flat Rust output back
+ * to the TS PreExtracted format for downstream resolution.
+ */
+function extractWithNativeEngine(
+  srcPatterns: string[],
+  cwd: string,
+  containerConfig: ContainerConfig,
+  verbose: boolean | undefined,
+): PreExtracted {
+  const filePaths = srcPatterns.flatMap((pattern) =>
+    globSync(pattern, { cwd, absolute: true }),
+  );
+
+  const fileContents: Array<{ path: string; content: string }> = [];
+  const sourceLines = new Map<string, string[]>();
+  const readErrors: SkippedClass[] = [];
+
+  for (const filePath of filePaths) {
+    const relPath = relative(cwd, filePath);
+    try {
+      const content = readFileSync(filePath, 'utf-8');
+      fileContents.push({ path: relPath, content });
+      sourceLines.set(relPath, content.split('\n'));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(verbose, `  Skipping ${relPath}: ${message}`);
+      readErrors.push({
+        file: relPath,
+        line: 0,
+        className: '(file)',
+        reason: `File read error: ${message}`,
+      });
+    }
+  }
+
+  const containerEntries = Array.from(containerConfig.containers.entries()).map(
+    ([component, bgClass]) => ({ component, bgClass }),
+  );
+
+  const nativeResult = getNativeModule().extractAndScan({
+    fileContents,
+    containerConfig: containerEntries,
+    defaultBg: containerConfig.defaultBg,
+  });
+
+  return convertNativeResult(nativeResult, sourceLines, readErrors, filePaths.length);
 }
