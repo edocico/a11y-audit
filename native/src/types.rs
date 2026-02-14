@@ -118,3 +118,14 @@ pub struct PreExtractedFile {
     pub path: String,
     pub regions: Vec<ClassRegion>,
 }
+
+/// NAPI-compatible version of CheckResult for returning to JS
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct CheckResultJs {
+    pub violations: Vec<ContrastResult>,
+    pub passed: Vec<ContrastResult>,
+    pub ignored: Vec<ContrastResult>,
+    pub ignored_count: u32,
+    pub skipped_count: u32,
+}
