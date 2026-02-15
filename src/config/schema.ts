@@ -47,6 +47,14 @@ export const auditConfigSchema = z.object({
     /** Path to baseline file (relative to project root) */
     path: z.string().default('.a11y-baseline.json'),
   }).optional(),
+
+  /** Suggestion engine for auto-fix hints */
+  suggestions: z.object({
+    /** Enable suggestion generation */
+    enabled: z.boolean().default(false),
+    /** Maximum suggestions per violation */
+    maxSuggestions: z.number().min(1).max(10).default(3),
+  }).optional(),
 });
 
 export type AuditConfigInput = z.input<typeof auditConfigSchema>;

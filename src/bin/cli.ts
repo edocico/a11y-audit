@@ -25,6 +25,8 @@ program
   .option('--update-baseline', 'Generate or update the baseline file')
   .option('--baseline-path <path>', 'Override baseline file path')
   .option('--fail-on-improvement', 'Fail CI if fewer violations than baseline (forces baseline update)')
+  .option('--suggest', 'Generate auto-fix suggestions for contrast violations')
+  .option('--max-suggestions <n>', 'Maximum suggestions per violation (default: 3)')
   .action(async (opts) => {
     try {
       // 1. Load config file (if any), then merge CLI flags as overrides
@@ -46,6 +48,13 @@ program
       const baselinePath: string =
         (opts.baselinePath as string | undefined) ?? fileConfig.baseline?.path ?? '.a11y-baseline.json';
       const baselineEnabled: boolean = fileConfig.baseline?.enabled ?? false;
+
+      const suggestEnabled: boolean =
+        opts.suggest === true || (fileConfig.suggestions?.enabled ?? false);
+      const maxSuggestions: number =
+        opts.maxSuggestions != null
+          ? parseInt(opts.maxSuggestions as string, 10)
+          : (fileConfig.suggestions?.maxSuggestions ?? 3);
 
       // 2. Resolve CSS file paths relative to cwd
       const resolvedCss = css.map((p: string) => resolve(cwd, p));
@@ -75,6 +84,10 @@ program
           path: baselinePath,
           updateBaseline,
           failOnImprovement,
+        } : undefined,
+        suggestions: suggestEnabled ? {
+          enabled: true,
+          maxSuggestions,
         } : undefined,
       };
 

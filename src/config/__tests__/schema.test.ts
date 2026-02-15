@@ -72,4 +72,31 @@ describe('auditConfigSchema', () => {
     const result = auditConfigSchema.parse({});
     expect(result.portals).toEqual({});
   });
+
+  describe('suggestions config', () => {
+    it('defaults to disabled with maxSuggestions=3', () => {
+      const result = auditConfigSchema.parse({
+        suggestions: {},
+      });
+      expect(result.suggestions).toEqual({
+        enabled: false,
+        maxSuggestions: 3,
+      });
+    });
+
+    it('accepts enabled with custom maxSuggestions', () => {
+      const result = auditConfigSchema.parse({
+        suggestions: { enabled: true, maxSuggestions: 5 },
+      });
+      expect(result.suggestions).toEqual({
+        enabled: true,
+        maxSuggestions: 5,
+      });
+    });
+
+    it('suggestions field is optional', () => {
+      const result = auditConfigSchema.parse({});
+      expect(result.suggestions).toBeUndefined();
+    });
+  });
 });
