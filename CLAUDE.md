@@ -14,6 +14,7 @@ A framework-agnostic static contrast audit library for WCAG 2.1 AA/AAA and APCA.
 - `docs/plans/2026-02-13-phase1-rust-core-engine.md` — Phase 1 Rust engine plan (20 tasks). **All 20 tasks complete.** Covers NAPI-RS setup, math engine, JSX parser, pipeline integration, rayon parallelization, NAPI bridge, cross-validation, and benchmarking.
 - `docs/plans/2026-02-14-phase2-baseline-ratchet.md` — Phase 2 Baseline/Ratchet plan (10 tasks). **All 10 tasks complete.** Covers hash generation, load/save, reconciliation, config, pipeline integration, CLI flags, report extensions, E2E tests.
 - `docs/plans/2026-02-14-phase3-portals-opacity.md` — Phase 3 Parser Precision plan (12 tasks). **All 12 tasks complete.** Covers opacity stack tracking, visibility threshold, portal context reset, config/preset updates, cross-validation, E2E tests, documentation.
+- `docs/plans/2026-02-15-phase4-suggestions-cva.md` — Phase 4 Suggestions + CVA plan. **All tasks complete.** Covers suggestion engine (US-03), CVA variant expansion (US-06), pipeline integration, CLI flags, config schema, E2E tests, documentation.
 
 ## Commands
 
@@ -35,7 +36,7 @@ npx tsx scripts/benchmark.mts --files=500      # benchmark native vs legacy
 
 ## Architecture
 
-**Ported from multicoin-frontend.** All 6 phases complete. ~450 tests passing across 24 test files (TS) + 287 Rust tests. Hybrid Rust+JS pipeline connected end-to-end with legacy fallback. Phase 2 (Baseline/Ratchet) complete. Phase 3 (Parser Precision: US-04 Portals + US-05 Opacity) complete.
+**Ported from multicoin-frontend.** All 6 phases complete. ~470 tests passing across 26 test files (TS) + 287 Rust tests. Hybrid Rust+JS pipeline connected end-to-end with legacy fallback. Phase 2 (Baseline/Ratchet) complete. Phase 3 (Parser Precision: US-04 Portals + US-05 Opacity) complete. Phase 4 (Suggestions + CVA expansion) complete.
 
 **Target architecture (Layered Onion):** pure math core → plugin interfaces (`ColorResolver`, `FileParser`, `ContainerConfig`) → config (`zod` + `lilconfig`) → CLI (`commander`). Tailwind + JSX are the first plugin implementations.
 
@@ -46,17 +47,19 @@ npx tsx scripts/benchmark.mts --files=500      # benchmark native vs legacy
 - `src/core/contrast-checker.ts` — `checkAllPairs()`: WCAG contrast checking with alpha compositing, APCA Lc calculation, AA/AAA level selection, and `// a11y-ignore` suppression. Uses `colord` for contrast ratios and `apca-w3` for APCA.
 - `src/bin/cli.ts` — Commander-based CLI: loads config via `lilconfig`, merges CLI flags, runs pipeline.
 - `src/core/baseline.ts` — Baseline/ratchet system: `generateViolationHash()` (SHA-256 content-addressable), `loadBaseline()`, `saveBaseline()`, `reconcileViolations()` (leaky-bucket algorithm). No line numbers or theme mode in hash for refactoring stability.
-- `src/core/pipeline.ts` — `runAudit()`: orchestrates extract-once/resolve-twice flow, baseline reconciliation (Phase 3.5), writes reports to disk.
+- `src/core/pipeline.ts` — `runAudit()`: orchestrates extract-once/resolve-twice flow, CVA expansion (Phase 1a), baseline reconciliation (Phase 3.5), suggestion enrichment (Phase 3a), writes reports to disk.
+- `src/core/suggestions.ts` — Suggestion engine: `extractShadeFamilies()`, `parseFamilyAndShade()`, `generateSuggestions()` (luminosity-directed shade walk). Post-check enrichment step between Phase 3 (contrast check) and Phase 3.5 (baseline). Opt-in via `--suggest` CLI flag or `suggestions.enabled` config.
 - `src/core/report/json.ts` — `generateJsonReport()`: structured JSON output with summary + per-theme data. Optional `baselineSummary` parameter adds new/known/fixed counts.
 - `src/core/report/markdown.ts` — `generateReport()`: Markdown audit reports grouped by file, SC 1.4.3/1.4.11 separation, APCA support. With baseline: splits violations into "New" vs collapsible "Baseline" sections.
 - `src/plugins/interfaces.ts` — Plugin contracts: `ColorResolver`, `FileParser`, `ContainerConfig` (containers + portals), `AuditConfig`.
-- `src/config/schema.ts` — Zod schema `auditConfigSchema` with defaults; `loader.ts` uses `lilconfig`. Includes `portals` field for portal component configuration.
+- `src/config/schema.ts` — Zod schema `auditConfigSchema` with defaults; `loader.ts` uses `lilconfig`. Includes `portals` field for portal component configuration, `suggestions` for suggestion engine config, `cva` for CVA expansion config.
 - `src/plugins/tailwind/css-resolver.ts` — CSS variable resolution: `buildThemeColorMaps()`, `resolveClassToHex()`, balanced-brace parsing, alpha compositing helpers.
 - `src/plugins/tailwind/palette.ts` — `extractTailwindPalette()` + `findTailwindPalette()` for Tailwind v4 color palette extraction.
 - `src/plugins/tailwind/presets/shadcn.ts` — shadcn/ui preset: 7 container→bg mappings + 15 portal→bg/reset mappings. Implements `ContainerConfig`.
 - `src/plugins/jsx/categorizer.ts` — Pure classification functions: `stripVariants()`, `routeClassToTarget()`, `categorizeClasses()`, `determineIsLargeText()`, `extractBalancedParens()`, `extractStringLiterals()`, `getIgnoreReasonForLine()`, `getContextOverrideForLine()`. Exports `TaggedClass`, `ClassBuckets`, `ForegroundGroup`, `PairMeta` interfaces.
 - `src/plugins/jsx/parser.ts` — JSX state machine: `extractClassRegions(source, containerMap, defaultBg)`, `isSelfClosingTag()`, `findExplicitBgInTag()`, `extractInlineStyleColors()`. Handles `@a11y-context` (single-element) and `@a11y-context-block` (block scope) annotations via context stack. The container map is injected (not imported globally).
 - `src/plugins/jsx/region-resolver.ts` — Bg/fg pairing logic: `buildEffectiveBg()`, `generatePairs()`, `resolveFileRegions()`, `extractAllFileRegions(srcPatterns, cwd, containerMap, defaultBg)`. Cross-plugin dependency: imports `resolveClassToHex` from `tailwind/css-resolver.ts`.
+- `src/plugins/jsx/cva-expander.ts` — CVA expansion: `extractCvaBase()`, `parseCvaVariants()`, `expandCvaToRegions()`, `expandCvaInPreExtracted()`. Post-extraction step between Phase 1 (extraction) and Phase 2 (resolution). Opt-in via `--cva` CLI flag or `cva.enabled` config.
 - `native/` — Rust core engine (NAPI-RS). Phase 1 complete (20/20 tasks). Phase 3 complete (12/12 tasks).
   - `native/src/types.rs` — Rust equivalents of `core/types.ts` with `#[napi(object)]` for JS interop. Includes `ExtractOptions` with `portal_config`.
   - `native/src/math/` — Color math: `hex.rs` (parseHexRGB), `composite.rs` (compositeOver), `wcag.rs` (WCAG 2.1 contrast), `apca.rs` (APCA Lc), `color_parse.rs` (toHex via csscolorparser).
@@ -91,6 +94,8 @@ npx tsx scripts/benchmark.mts --files=500      # benchmark native vs legacy
 - **Opacity stack (US-05)**: `ContextTracker` tracks `cumulative_opacity` on `StackEntry`. Each nested tag with `opacity-*` multiplies the parent's opacity. Elements with cumulative opacity < 10% are ignored. In TS resolution, `effectiveOpacity` reduces `bgAlpha` and `textAlpha` for accurate contrast calculation.
 - **Portal context reset (US-04)**: Portal components (Dialog, Popover, etc.) reset the context stack bg to `defaultBg` and opacity to 1.0. Portal check happens BEFORE container check in `on_tag_open`. The value `"reset"` in `portalConfig` maps to `defaultBg`. This is a native-only feature; TS legacy parser uses `@a11y-context` annotations as workaround.
 - **Container/portal split in shadcn preset**: The 21-component shadcn preset is split into 7 containers (Card, Accordion, TabsContent, Alert) and 15 portals (Dialog, Sheet, Popover, Dropdown, etc.). Portals reset context; containers inherit.
+- **Suggestion engine (US-03)**: Luminosity-directed shade walk. Parses violating fg class to find its Tailwind shade family, then walks toward higher-contrast shades (darker on light bg, lighter on dark bg). Uses `colord` for contrast + `compositeOver` for alpha. Suggestions sorted by shade distance (minimal visual change). Respects AA/AAA thresholds and non-text/large-text rules.
+- **CVA variant expansion (US-06)**: Lightweight heuristic parsing of `cva()` calls. Extracts base classes and variant groups via regex + balanced brace matching (no AST). Default mode checks only the defaultVariants combination. `--check-all-variants` mode adds one region per non-default variant option. `compoundVariants` and non-string-literal values are ignored.
 
 ## Testing Conventions
 
@@ -125,6 +130,18 @@ node dist/bin/cli.js --fail-on-improvement --verbose
 
 # Custom baseline path
 node dist/bin/cli.js --baseline-path custom-baseline.json --verbose
+
+# Generate suggestions for violations
+node dist/bin/cli.js --suggest --verbose
+
+# Custom max suggestions
+node dist/bin/cli.js --suggest --max-suggestions 5 --verbose
+
+# Enable CVA expansion (default variants only)
+node dist/bin/cli.js --cva --verbose
+
+# Enable CVA with all variant checking
+node dist/bin/cli.js --cva --check-all-variants --verbose
 ```
 
 ## Mandatory Workflow Rules

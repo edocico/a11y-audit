@@ -1,6 +1,6 @@
 # Architettura Tecnica: a11y-audit Library (v1.0)
 
-> **Ultimo aggiornamento**: 2026-02-14 | **Versione**: 1.2.0 (standalone npm package) | **~450 test TS across 24 files + 287 test Rust across 14 moduli**
+> **Ultimo aggiornamento**: 2026-02-15 | **Versione**: 1.3.0 (standalone npm package) | **~470 test TS across 26 files + 287 test Rust across 14 moduli**
 
 ---
 
@@ -149,11 +149,13 @@ resolve(light)    resolve(dark)   <-- risoluzione per-tema (DUE volte)
 +---------------------------------------------------------------+
 |               Plugin Implementations                          |
 |  src/plugins/tailwind/ — css-resolver, palette, presets       |
-|  src/plugins/jsx/ — categorizer, parser, region-resolver      |
+|  src/plugins/jsx/ — categorizer, parser, region-resolver,     |
+|                       cva-expander                            |
 +---------------------------------------------------------------+
 |                  Pure Math Core (TS)                           |
 |  src/core/contrast-checker.ts — WCAG + APCA                  |
 |  src/core/color-utils.ts — toHex() normalizzazione            |
+|  src/core/suggestions.ts — shade walk per auto-fix            |
 |  src/core/types.ts — tutti i tipi condivisi                   |
 +---------------------------------------------------------------+
         |  fallback se native non disponibile
@@ -241,7 +243,8 @@ a11y-audit/
     │   ├── color-utils.ts        # toHex(): CSS color normalization via culori
     │   ├── contrast-checker.ts   # checkAllPairs(): WCAG + APCA contrast checking
     │   ├── baseline.ts           # generateViolationHash(), loadBaseline(), saveBaseline(), reconcileViolations()
-    │   ├── pipeline.ts           # runAudit(): full pipeline orchestration
+    │   ├── suggestions.ts       # generateSuggestions(), extractShadeFamilies(), parseFamilyAndShade()
+    │   ├── pipeline.ts           # runAudit(): full pipeline orchestration (Phase 1a CVA, Phase 3a suggestions)
     │   ├── report/
     │   │   ├── markdown.ts       # generateReport(): Markdown audit output
     │   │   ├── json.ts           # generateJsonReport(): structured JSON output
@@ -255,6 +258,7 @@ a11y-audit/
     │       ├── color-utils.test.ts
     │       ├── contrast-checker.test.ts
     │       ├── contrast-checker.property.test.ts  # fast-check property tests
+    │       ├── suggestions.test.ts                 # Suggestion engine tests (20 tests)
     │       ├── report-json.test.ts                # JSON report baseline extension tests (3 tests)
     │       ├── report-markdown.test.ts            # Markdown report baseline extension tests (4 tests)
     │       └── integration.test.ts                # Full pipeline e2e tests
@@ -274,12 +278,14 @@ a11y-audit/
     │       ├── categorizer.ts    # stripVariants(), routeClassToTarget(), categorizeClasses(), getContextOverrideForLine()
     │       ├── parser.ts         # extractClassRegions() state machine + @a11y-context annotation handling
     │       ├── region-resolver.ts  # buildEffectiveBg(), generatePairs(), resolveFileRegions()
+    │       ├── cva-expander.ts   # extractCvaBase(), parseCvaVariants(), expandCvaToRegions(), expandCvaInPreExtracted()
     │       └── __tests__/
     │           ├── categorizer.test.ts
     │           ├── categorizer.property.test.ts
     │           ├── parser.test.ts
     │           ├── region-resolver.test.ts
-    │           └── region-resolver.io.test.ts
+    │           ├── region-resolver.io.test.ts
+    │           └── cva-expander.test.ts   # CVA expansion tests (18 tests)
     └── types/
         ├── public.ts             # Re-exports for public API
         ├── apca-w3.d.ts          # Manual type declarations (no bundled types)
@@ -375,6 +381,10 @@ npx a11y-audit [options]
 | `--no-dark` | boolean | `false` | Salta l'analisi dark mode |
 | `--preset <name>` | string | — | Preset container context (es. `shadcn`) |
 | `--verbose` | boolean | `false` | Stampa progresso su stderr |
+| `--suggest` | boolean | `false` | Genera suggerimenti auto-fix per le violazioni di contrasto |
+| `--max-suggestions <n>` | number | `3` | Numero massimo di suggerimenti per violazione (1-10) |
+| `--cva` | boolean | `false` | Abilita espansione varianti CVA per l'analisi statica |
+| `--check-all-variants` | boolean | `false` | Controlla tutte le combinazioni di varianti CVA (non solo i default) |
 
 I flag CLI sovrascrivono i valori nel file di configurazione. Se nessun flag ne config file sono forniti, vengono usati i default dallo schema Zod.
 
@@ -451,6 +461,15 @@ console.log(`Violations: ${totalViolations}`);
 │           │    │  Output: PreExtracted { files, readErrors } │
 └───────────┘    └───────────────────┬───────────────────────┘
                                      │
+                                     ▼
+┌───────────┐    ┌───────────────────────────────────────────┐
+│ Phase 1a  │    │  cva.enabled?                              │
+│ CVA Expand│───>│  YES → expandCvaInPreExtracted()           │
+│ (opzionale)    │         cva-expander.ts                    │
+│           │    │  NO  → pass-through                        │
+│           │    │  Output: PreExtracted (con regioni espanse)│
+└───────────┘    └───────────────────┬───────────────────────┘
+                                     │
                      ┌───────────────┴───────────────┐
                      ▼                               ▼
 ┌──────────────────────────────┐  ┌──────────────────────────────┐
@@ -467,6 +486,15 @@ console.log(`Violations: ${totalViolations}`);
 └──────────────┬───────────────┘  └──────────────┬───────────────┘
                │                                  │
                └───────────────┬──────────────────┘
+                               ▼
+                ┌──────────────────────────────────┐
+                │  Phase 3a: suggestions.enabled?  │
+                │  YES → generateSuggestions()     │
+                │         per ogni violazione      │
+                │  NO  → skip                      │
+                │  Output: violations arricchite   │
+                │          con ColorSuggestion[]   │
+                └──────────────┬───────────────────┘
                                ▼
                 ┌──────────────────────────┐
                 │  generateReport() /      │
@@ -589,6 +617,12 @@ La state machine scansiona il sorgente **carattere per carattere** (non riga per
 
 **Lookup linea**: Pre-calcola un array `lineBreaks[]` con gli offset dei `\n` in un singolo pass O(n). Poi `lineAt(offset)` usa binary search O(log n) per convertire offset → numero di riga.
 
+### Phase 1a: CVA Expansion (opzionale)
+
+**File**: `src/plugins/jsx/cva-expander.ts`
+
+Se `cva.enabled`, le `ClassRegion` con contenuto cva vengono espanse in regioni virtuali prima della risoluzione. Dettagliato nella sezione 6d.
+
 ### Phase 2: Resolution — Classe → ColorPair
 
 **File**: `src/plugins/jsx/region-resolver.ts` → `resolveFileRegions()`, `src/plugins/jsx/categorizer.ts`
@@ -615,6 +649,12 @@ Il processo per ogni regione:
 **File**: `src/core/contrast-checker.ts`
 
 Dettagliato nella sezione 5.1 (Alpha Compositing) e 5.2 (Soglie WCAG).
+
+### Phase 3a: Suggestions (opzionale)
+
+**File**: `src/core/suggestions.ts`
+
+Se `suggestions.enabled`, ogni violazione viene arricchita con classi Tailwind alternative che soddisfano la soglia WCAG. Dettagliato nella sezione 6c.
 
 ### Phase 4: Report Generation
 
@@ -661,6 +701,18 @@ const auditConfigSchema = z.object({
   }).default({ light: '#ffffff', dark: '#09090b' }),
   preset:          z.string().optional(),
   tailwindPalette: z.string().optional(),
+
+  /** Suggestion engine per auto-fix hints */
+  suggestions: z.object({
+    enabled: z.boolean().default(false),
+    maxSuggestions: z.number().min(1).max(10).default(3),
+  }).optional(),
+
+  /** CVA variant expansion per analisi statica */
+  cva: z.object({
+    enabled: z.boolean().default(false),
+    checkAllVariants: z.boolean().default(false),
+  }).optional(),
 });
 ```
 
@@ -678,6 +730,12 @@ const auditConfigSchema = z.object({
 | `pageBg` | `{ light, dark }` | `{ '#ffffff', '#09090b' }` | Sfondo pagina per alpha compositing |
 | `preset` | `string?` | — | Nome preset da caricare (es. `'shadcn'`) |
 | `tailwindPalette` | `string?` | auto-detected | Path esplicito a `tailwindcss/theme.css` |
+| `suggestions` | `{ enabled, maxSuggestions }?` | — | Configurazione suggestion engine |
+| `suggestions.enabled` | `boolean` | `false` | Abilita generazione suggerimenti |
+| `suggestions.maxSuggestions` | `number` | `3` | Max suggerimenti per violazione (1-10) |
+| `cva` | `{ enabled, checkAllVariants }?` | — | Configurazione espansione CVA |
+| `cva.enabled` | `boolean` | `false` | Abilita espansione varianti CVA |
+| `cva.checkAllVariants` | `boolean` | `false` | Controlla tutte le varianti (non solo default) |
 
 ### Preset: come funzionano
 
@@ -1199,6 +1257,218 @@ Campo opzionale nello schema Zod. Se omesso, la baseline non e attiva. Il flag `
 
 ---
 
+## 6c. Suggestion Engine (Phase 4 — US-03)
+
+### Scopo
+
+Il motore di suggerimenti genera automaticamente classi Tailwind alternative per le violazioni di contrasto. Per ogni violazione, analizza la classe foreground, individua la famiglia di shade (es. `gray-500` → famiglia `gray`), e cammina lungo la scala dei shade nella direzione che aumenta il contrasto. L'obiettivo e suggerire la modifica visivamente piu vicina all'originale che soddisfi la soglia WCAG.
+
+### Modulo: `src/core/suggestions.ts`
+
+Tre funzioni principali:
+
+#### `parseFamilyAndShade(className: string): ParsedClass | null`
+
+Parsa una classe Tailwind nel suo prefisso (`text-`, `bg-`, `border-`, `ring-`, `outline-`), famiglia colore (es. `gray`, `red`, `sky`) e numero shade (es. 500, 600). Restituisce `null` per colori semantici (`text-foreground`), valori arbitrari (`text-[#hex]`), utility non-colore, e annotazioni di contesto.
+
+#### `extractShadeFamilies(palette: RawPalette): Map<string, ShadeFamily>`
+
+Raggruppa le variabili CSS della palette Tailwind in famiglie di shade. Analizza le entry del tipo `--color-gray-500` e le organizza per famiglia (`gray`) e shade (`500`). Ignora entry non numeriche (black, white, colori semantici).
+
+#### `generateSuggestions(violation, families, threshold, themeMode, maxSuggestions?): ColorSuggestion[]`
+
+Algoritmo **luminosity-directed walk**:
+
+1. **Parse**: Identifica famiglia e shade della classe fg violante
+2. **Effective bg**: Calcola lo sfondo effettivo con alpha compositing (stessa logica di `contrast-checker.ts`)
+3. **Threshold**: Determina il ratio richiesto in base a livello (AA/AAA), tipo (text/non-text), e dimensione (normal/large)
+4. **Direzione**: Calcola la luminanza dello sfondo. Su sfondo chiaro (luminanza > 0.5), cerca shade piu scuri (luminanza candidato < luminanza bg). Su sfondo scuro, cerca shade piu chiari
+5. **Walk**: Itera tutti gli shade della famiglia, filtra per direzione e soglia, calcola il contrast ratio con `colord`
+6. **Ordinamento**: I candidati sono ordinati per `shadeDistance` (distanza dallo shade originale) per minimizzare il cambio visivo. A parita di distanza, preferisce ratio minore (cambio minimo)
+
+```
+Violazione: text-gray-400 su bg-white (ratio 2.68, soglia AA 4.5)
+
+Palette gray: 50→#f9fafb, 100→#f3f4f6, ..., 500→#6b7280, 600→#4b5563, 700→#374151, ...
+
+Direzione: sfondo chiaro → cerca shade piu scuri (luminanza minore)
+Candidati passanti (ratio >= 4.5): gray-600 (ratio 5.51), gray-700 (ratio 8.35), gray-800 (ratio 11.74), gray-900 (ratio 15.47)
+
+Risultato (max 3): [gray-600 (dist=2), gray-700 (dist=3), gray-800 (dist=4)]
+```
+
+### Tipi
+
+```typescript
+interface ShadeFamily {
+  family: string;               // "gray", "red", "sky"
+  shades: Map<number, string>;  // 500 → "#6b7280"
+}
+
+interface ColorSuggestion {
+  suggestedClass: string;  // "text-gray-600"
+  suggestedHex: string;    // "#4b5563"
+  newRatio: number;        // 5.51
+  shadeDistance: number;   // 2 (da 400 a 600)
+}
+```
+
+### Inserimento nel Pipeline (Phase 3a)
+
+L'arricchimento avviene **dopo** il contrast checking (Phase 3) e **prima** della riconciliazione baseline (Phase 3.5):
+
+1. Se `suggestions.enabled`: estrai le shade families dalla palette
+2. Per ogni violazione di ogni tema: chiama `generateSuggestions()`
+3. Le suggestions sono attaccate al campo `ContrastResult.suggestions`
+4. I report includono i suggerimenti (nel Markdown e nel JSON)
+
+### CLI
+
+```bash
+# Abilita suggerimenti
+node dist/bin/cli.js --suggest --verbose
+
+# Max 5 suggerimenti per violazione
+node dist/bin/cli.js --suggest --max-suggestions 5 --verbose
+```
+
+### Configurazione
+
+```json
+{
+  "suggestions": {
+    "enabled": true,
+    "maxSuggestions": 3
+  }
+}
+```
+
+### Limitazioni
+
+- Solo classi numeriche di shade (es. `text-gray-500`). Classi semantiche (`text-foreground`, `text-primary`) non generano suggerimenti
+- Non suggerisce modifiche allo sfondo, solo al foreground
+- Non gestisce opacity modifier (es. `text-gray-500/50`)
+- I suggerimenti sono per-tema: lo stesso shade potrebbe non funzionare per entrambi light e dark
+
+---
+
+## 6d. CVA Variant Expansion (Phase 4 — US-06)
+
+### Scopo
+
+`cva()` (class-variance-authority) e un pattern comune per definire componenti con varianti stilistiche. Una chiamata `cva()` contiene classi base e gruppi di varianti — il tool senza espansione vedrebbe tutto il contenuto raw come un unico `ClassRegion`, generando falsi positivi per combinazioni di varianti che non coesistono.
+
+L'espansione CVA trasforma una singola `ClassRegion` con contenuto `cva()` in piu regioni virtuali, ciascuna rappresentante una combinazione di varianti auditable.
+
+### Modulo: `src/plugins/jsx/cva-expander.ts`
+
+Quattro funzioni principali:
+
+#### `extractCvaBase(content: string): string`
+
+Estrae le classi base (primo argomento stringa) dal contenuto raw di `cva()`. Cerca una stringa tra virgolette all'inizio del contenuto.
+
+#### `parseCvaVariants(content: string): ParsedCvaConfig`
+
+Parsa i gruppi di varianti e i `defaultVariants` dal contenuto raw `cva()`. Usa pattern matching testuale con parsing di parentesi bilanciate (non AST):
+
+1. Trova il blocco `variants: { ... }` con `findClosingBrace()`
+2. Per ogni asse (es. `variant`, `size`): estrae le opzioni come coppie `nome: "classi"`
+3. Trova il blocco `defaultVariants: { ... }` e ne estrae le selezioni
+
+**Limitazioni del parsing**:
+- Solo valori stringa letterale (`"classi"`, `'classi'`). Valori non-stringa (oggetti, funzioni, variabili) sono ignorati
+- `compoundVariants` sono completamente ignorati (combinazioni condizionali troppo complesse per analisi statica)
+
+#### `expandCvaToRegions(region: ClassRegion, checkAllVariants: boolean): ClassRegion[]`
+
+Espande una `ClassRegion` con contenuto cva in regioni virtuali:
+
+- **Modalita default** (`checkAllVariants=false`): UNA sola regione con `base + defaultVariants`
+- **Modalita all-variants** (`checkAllVariants=true`): la combinazione default + UNA regione per ogni opzione non-default di ogni asse (ciascuna con `base + classi di quell'opzione`)
+
+```
+Input cva():
+  base: "px-4 py-2 text-sm"
+  variants:
+    variant: { default: "bg-primary text-primary-foreground", destructive: "bg-destructive text-white", outline: "border border-input bg-transparent" }
+    size: { default: "h-10", sm: "h-8 text-xs", lg: "h-12 text-base" }
+  defaultVariants: { variant: "default", size: "default" }
+
+Modalita default → 1 regione:
+  "px-4 py-2 text-sm bg-primary text-primary-foreground h-10"
+
+Modalita all-variants → 1 + 2 + 2 = 5 regioni:
+  "px-4 py-2 text-sm bg-primary text-primary-foreground h-10"   (default combo)
+  "px-4 py-2 text-sm bg-destructive text-white"                  (variant=destructive)
+  "px-4 py-2 text-sm border border-input bg-transparent"         (variant=outline)
+  "px-4 py-2 text-sm h-8 text-xs"                               (size=sm)
+  "px-4 py-2 text-sm h-12 text-base"                            (size=lg)
+```
+
+#### `expandCvaInPreExtracted(preExtracted, checkAllVariants): PreExtracted`
+
+Post-processing step che opera sull'intero `PreExtracted`. Per ogni file, identifica le regioni cva (tramite `isCvaContent()`) e le espande. Le regioni non-cva passano invariate.
+
+#### `isCvaContent(content: string): boolean`
+
+Euristica per determinare se il contenuto di una `ClassRegion` proviene da una chiamata `cva()`. Controlla che inizi con un carattere di virgoletta e contenga la keyword `variants:`.
+
+### Inserimento nel Pipeline (Phase 1a)
+
+L'espansione CVA avviene **dopo** l'estrazione (Phase 1) e **prima** della risoluzione (Phase 2):
+
+```
+Phase 1: Extract → PreExtracted { files con ClassRegion raw }
+    ↓
+Phase 1a: cva.enabled? → expandCvaInPreExtracted() → PreExtracted { regioni espanse }
+    ↓
+Phase 2: Resolve → ColorPair[] (per-tema)
+```
+
+### CLI
+
+```bash
+# Espansione CVA (solo combinazione default)
+node dist/bin/cli.js --cva --verbose
+
+# Tutte le varianti
+node dist/bin/cli.js --cva --check-all-variants --verbose
+```
+
+### Configurazione
+
+```json
+{
+  "cva": {
+    "enabled": true,
+    "checkAllVariants": false
+  }
+}
+```
+
+### Tipi
+
+```typescript
+interface CvaVariantOption {
+  name: string;    // "destructive", "sm"
+  classes: string; // "bg-destructive text-white"
+}
+
+interface CvaVariantGroup {
+  axis: string;           // "variant", "size"
+  options: CvaVariantOption[];
+}
+
+interface CvaDefinition {
+  baseClasses: string;
+  variants: CvaVariantGroup[];
+  defaultVariants: Map<string, string>;
+}
+```
+
+---
+
 ## 7. Strutture Dati Chiave
 
 ### ResolvedColor
@@ -1290,6 +1560,10 @@ interface ContrastResult extends ColorPair {
   passAAA: boolean       // ratio >= 7.0
   passAAALarge: boolean  // ratio >= 4.5
   apcaLc?: number | null
+  /** true = known baseline violation, false = new, undefined = baseline not active */
+  isBaseline?: boolean
+  /** Auto-generated shade suggestions (Phase 4, US-03). Empty if not available */
+  suggestions?: ColorSuggestion[]
 }
 ```
 
@@ -1439,7 +1713,7 @@ Se Tailwind aggiunge nuove utility con prefisso ambiguo e il report mostra "Unre
 
 ## 9. Testing
 
-### Struttura (~450 test TS across 24 file + 287 test Rust across 14 moduli)
+### Struttura (~470 test TS across 26 file + 287 test Rust across 14 moduli)
 
 Il test suite e organizzato in quattro livelli (TS) piu i test Rust:
 
@@ -1456,6 +1730,7 @@ src/core/__tests__/
   color-utils.test.ts                  # toHex: hex/oklch/hsl/display-p3/rgb
   contrast-checker.test.ts             # compositeOver, parseHexRGB, checkAllPairs, AAA, APCA
   contrast-checker.property.test.ts    # fast-check: compositeOver, parseHexRGB bounds
+  suggestions.test.ts                  # parseFamilyAndShade, extractShadeFamilies, generateSuggestions (20 tests)
   integration.test.ts                  # Full pipeline: extract -> resolve -> check -> report
 
 src/core/report/__tests__/
@@ -1474,6 +1749,7 @@ src/plugins/jsx/__tests__/
   parser.test.ts                       # extractClassRegions state machine, isSelfClosingTag
   region-resolver.test.ts              # buildEffectiveBg, generatePairs, resolveFileRegions
   region-resolver.io.test.ts           # extractAllFileRegions con vi.mock('node:fs', 'glob')
+  cva-expander.test.ts                # extractCvaBase, parseCvaVariants, expandCvaToRegions (18 tests)
 ```
 
 **Test Rust** (287 test, `cargo test` dalla directory `native/`):
@@ -1545,7 +1821,7 @@ npx tsx scripts/benchmark.mts --files=500        # performance benchmark (native
 | CSS inline `style={{}}` | Supporto parziale: solo hex letterali | Variabili CSS, espressioni JS, `rgb()`/`hsl()` non rilevati | Raro nel codebase Tailwind-first |
 | `@apply` in CSS | Il tool legge solo file template, non `.css` | Non analizzati | Raro — solo in file di configurazione globali |
 | Ternari cross-branch | `cond ? 'bg-A text-A' : 'bg-B text-B'` → audit vede bg-A+text-B | Falsi positivi | `// a11y-ignore: mutually exclusive ternary` |
-| cva cross-variant | cva estrae tutti i letterali da tutte le varianti | Falsi positivi | `// a11y-ignore: cross-variant cva` |
+| cva cross-variant | ~~cva estrae tutti i letterali da tutte le varianti~~ Espansione CVA disponibile (US-06) | Falsi positivi ridotti con `--cva` | Abilitare `--cva` per espansione strutturata. Senza: `// a11y-ignore: cross-variant cva` |
 | Posizionamento assoluto/fixed | DOM nesting ≠ visual nesting | Falsi positivi/negativi per elementi sovrapposti | `// @a11y-context bg:<sfondo-reale>` |
 | React Portals | Portal renderizza fuori dal parent DOM | ~~Sfondo inferito errato~~ Supportato nativamente (US-04) | Configurare portali nel preset o config `portals`. TS legacy: `// @a11y-context bg:<sfondo-reale>` |
 | Trasparenze impilate | ~~Compositing solo contro il container piu vicino~~ Opacita cumulativa tracciata (US-05) | Riduzione alpha precisa attraverso livelli annidati | Soglia visibilita 10%: sotto questa soglia, elementi ignorati |
@@ -1659,7 +1935,7 @@ jobs:
 | "Malformed hex: ... defaulting to black" | `toHex()` ha prodotto un hex non valido | Controllare il valore raw nel CSS. Formato non supportato da `culori`? |
 | Report mostra `(implicit) bg-background` dentro un `<Card>` | Container non nel preset/config **oppure** tag self-closing | Aggiungere in `containers` nel config. Verificare che nel JSX il tag abbia children |
 | Falsi positivi da ternari condizionali | `cond ? 'bg-A text-A' : 'bg-B text-B'` | `// a11y-ignore: mutually exclusive ternary` |
-| Falsi positivi da `cva()` | cva mette tutte le varianti nello stesso pool | `// a11y-ignore: cross-variant cva` |
+| Falsi positivi da `cva()` | cva mette tutte le varianti nello stesso pool | `--cva` per espansione strutturata, oppure `// a11y-ignore: cross-variant cva` |
 | 0 file trovati | Pattern glob non corrisponde o cwd errata | Verificare `src` nel config. Eseguire dalla root del progetto |
 | Dark mode mostra centinaia di violazioni | L'app non ha dark mode implementato | Atteso. Usare `--no-dark` o `dark: false` nel config |
 | Report JSON vuoto | `format` non specificato (default: markdown) | Usare `--format json` o `format: 'json'` nel config |
@@ -1714,8 +1990,8 @@ A: Si. Usa `// @a11y-context bg:#09090b fg:text-white`. L'override `fg:` sostitu
 | **`@a11y-context`** | Annotazione comment-based che sovrascrive il contesto bg/fg per un singolo elemento |
 | **`@a11y-context-block`** | Annotazione comment-based che sovrascrive il contesto bg per tutti i figli di un blocco (push sul context stack) |
 | **Preset** | Set predefinito di container contexts e portali (es. `shadcn` = 7 container + 15 portali) |
-| **Pipeline** | Sequenza di 5 fasi: config → bootstrap → extract → resolve → report |
-| **Native Engine** | Modulo Rust compilato via NAPI-RS che sostituisce gli hot path TS (math + parser). Phase 1 completa (~1.7x speedup), Phase 3 completa (opacity stack + portal context reset) |
+| **Pipeline** | Sequenza di 7 fasi: config → bootstrap → extract → CVA expand (1a) → resolve → suggestions (3a) → report |
+| **Native Engine** | Modulo Rust compilato via NAPI-RS che sostituisce gli hot path TS (math + parser). Phase 1 completa (~1.7x speedup), Phase 3 completa (opacity stack + portal context reset). Phase 4 (suggestions + CVA) e solo TS |
 | **NAPI-RS** | Framework per esporre funzioni Rust a Node.js tramite N-API. `#[napi]` per funzioni, `#[napi(object)]` per struct |
 | **ScanOrchestrator** | Componente centrale del parser Rust che possiede tutti i sub-visitor e coordina il flusso di stato tra ContextTracker, AnnotationParser, ClassExtractor, DisabledDetector, e CurrentColorResolver |
 | **CurrentColorResolver** | Tracker LIFO (US-08, native-only) delle classi `text-*` attraverso il nesting JSX per risolvere `border-current`/`ring-current` |
@@ -1727,3 +2003,9 @@ A: Si. Usa `// @a11y-context bg:#09090b fg:text-white`. L'override `fg:` sostitu
 | **Opacity Stack** | Tracciamento dell'opacita cumulativa attraverso container annidati. `opacity-50` dentro `opacity-50` = opacita effettiva 0.25. Elementi con opacita < 10% sono ignorati |
 | **effectiveOpacity** | Campo su `ClassRegion` e `ColorPair` che rappresenta l'opacita cumulativa dagli ancestor. Applicato come `bgAlpha` e `textAlpha` durante il resolution |
 | **Visibility Threshold** | Soglia del 10% di opacita cumulativa sotto la quale un elemento e marcato come `ignored` con reason "Near-invisible element" |
+| **Suggestion Engine** | Motore di suggerimenti (US-03, Phase 4) che genera classi Tailwind alternative per violazioni di contrasto. Usa un algoritmo di shade walk direzionale basato sulla luminanza dello sfondo |
+| **Shade Walk** | Algoritmo che cammina lungo la scala di shade di una famiglia colore Tailwind (50→950) nella direzione che aumenta il contrasto. Su sfondo chiaro cerca shade piu scuri, su sfondo scuro shade piu chiari |
+| **ShadeFamily** | Gruppo di shade numerici della stessa famiglia colore (es. gray-50, gray-100, ..., gray-950). Estratto dalla palette Tailwind per il suggestion engine |
+| **ColorSuggestion** | Suggerimento di fix per una violazione: classe alternativa, hex, nuovo ratio, distanza dallo shade originale |
+| **CVA Expansion** | Espansione strutturata di chiamate `cva()` (US-06, Phase 4) in regioni virtuali auditabili. Modalita default (solo defaultVariants) o all-variants (una regione per opzione non-default) |
+| **CvaVariantGroup** | Gruppo di varianti parsato da `cva()`: un asse (es. "variant") con le sue opzioni (es. "default", "destructive", "outline") |
