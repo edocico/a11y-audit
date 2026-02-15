@@ -267,3 +267,59 @@ describe('expandCvaInPreExtracted', () => {
     expect(result.files[0]!.regions.length).toBe(2);
   });
 });
+
+describe('CVA expansion integration', () => {
+  test('shadcn-style cva() expands to default combination', () => {
+    const cvaRegion: ClassRegion = {
+      content: `"inline-flex items-center rounded-md font-semibold", {
+        variants: {
+          variant: {
+            default: "bg-primary text-primary-foreground",
+            destructive: "bg-destructive text-destructive-foreground",
+            outline: "border border-input bg-background text-foreground",
+          },
+          size: {
+            default: "h-10 px-4 py-2 text-sm",
+            sm: "h-9 px-3 text-xs",
+            lg: "h-11 px-8 text-base",
+          },
+        },
+        defaultVariants: {
+          variant: "default",
+          size: "default",
+        },
+      }`,
+      startLine: 3,
+      contextBg: 'bg-background',
+    };
+
+    const preExtracted = {
+      files: [{ relPath: 'Button.tsx', lines: [], regions: [cvaRegion] }],
+      readErrors: [] as any[],
+      filesScanned: 1,
+    };
+
+    // Default mode
+    const defaultResult = expandCvaInPreExtracted(preExtracted, false);
+    expect(defaultResult.files[0]!.regions).toHaveLength(1);
+    const defaultCombo = defaultResult.files[0]!.regions[0]!.content;
+    expect(defaultCombo).toContain('inline-flex');
+    expect(defaultCombo).toContain('bg-primary');
+    expect(defaultCombo).toContain('text-primary-foreground');
+    expect(defaultCombo).toContain('h-10');
+
+    // All-variants mode
+    const allResult = expandCvaInPreExtracted(preExtracted, true);
+    expect(allResult.files[0]!.regions.length).toBeGreaterThan(1);
+
+    const hasDestructive = allResult.files[0]!.regions.some(
+      r => r.content.includes('bg-destructive'),
+    );
+    expect(hasDestructive).toBe(true);
+
+    const hasOutline = allResult.files[0]!.regions.some(
+      r => r.content.includes('border-input'),
+    );
+    expect(hasOutline).toBe(true);
+  });
+});
