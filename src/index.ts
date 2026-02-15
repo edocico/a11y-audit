@@ -17,6 +17,8 @@ export type {
   ClassRegion,
   FileRegions,
   ContextOverride,
+  ShadeFamily,
+  ColorSuggestion,
 } from './types/public.js';
 
 // ── Plugin interfaces ─────────────────────────────────────────────────

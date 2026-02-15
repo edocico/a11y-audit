@@ -29,4 +29,8 @@ export type {
   // Baseline types
   BaselineData,
   BaselineSummary,
+
+  // Suggestion types
+  ShadeFamily,
+  ColorSuggestion,
 } from '../core/types.js';

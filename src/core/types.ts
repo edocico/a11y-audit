@@ -54,6 +54,8 @@ export interface ContrastResult extends ColorPair {
   apcaLc?: number | null;
   /** true = known baseline violation, false = new violation, undefined = baseline not active */
   isBaseline?: boolean;
+  /** Auto-generated suggestions for fixing this violation (empty if none available) */
+  suggestions?: ColorSuggestion[];
 }
 
 /** A class that couldn't be resolved */
@@ -138,4 +140,24 @@ export interface BaselineSummary {
   knownCount: number;
   fixedCount: number;
   baselineTotal: number;
+}
+
+/** A shade family from the Tailwind palette (e.g., gray-50..gray-950) */
+export interface ShadeFamily {
+  /** Family name (e.g., "gray", "red", "sky") */
+  family: string;
+  /** Shade number -> hex value (e.g., 500 -> "#6b7280") */
+  shades: Map<number, string>;
+}
+
+/** A suggested fix for a contrast violation */
+export interface ColorSuggestion {
+  /** The suggested Tailwind class (e.g., "text-gray-600") */
+  suggestedClass: string;
+  /** Resolved hex of the suggested class */
+  suggestedHex: string;
+  /** WCAG contrast ratio with the suggested color */
+  newRatio: number;
+  /** How many shade steps from the original (e.g., 500->600 = 1) */
+  shadeDistance: number;
 }
