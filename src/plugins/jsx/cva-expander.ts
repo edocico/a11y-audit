@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { ClassRegion, CvaVariantGroup, CvaVariantOption } from '../../core/types.js';
+import type { ClassRegion, CvaVariantGroup, CvaVariantOption, FileRegions, SkippedClass } from '../../core/types.js';
 
 interface ParsedCvaConfig {
   variants: CvaVariantGroup[];
@@ -180,4 +180,49 @@ export function expandCvaToRegions(
   }
 
   return results;
+}
+
+interface PreExtracted {
+  files: FileRegions[];
+  readErrors: SkippedClass[];
+  filesScanned: number;
+}
+
+/**
+ * Detects whether a ClassRegion's content looks like a cva() call
+ * (starts with a quoted string and contains "variants:" keyword).
+ * @internal Exported for unit testing
+ */
+export function isCvaContent(content: string): boolean {
+  return /^\s*["'`]/.test(content) && content.includes('variants:');
+}
+
+/**
+ * Post-processing step that expands cva() ClassRegions into virtual regions.
+ * Runs on PreExtracted data between extraction (Phase 1) and resolution (Phase 2).
+ * Non-cva regions pass through unchanged.
+ */
+export function expandCvaInPreExtracted(
+  preExtracted: PreExtracted,
+  checkAllVariants: boolean,
+): PreExtracted {
+  const expandedFiles: FileRegions[] = preExtracted.files.map(file => {
+    const expandedRegions: ClassRegion[] = [];
+
+    for (const region of file.regions) {
+      if (isCvaContent(region.content)) {
+        expandedRegions.push(...expandCvaToRegions(region, checkAllVariants));
+      } else {
+        expandedRegions.push(region);
+      }
+    }
+
+    return { ...file, regions: expandedRegions };
+  });
+
+  return {
+    files: expandedFiles,
+    readErrors: preExtracted.readErrors,
+    filesScanned: preExtracted.filesScanned,
+  };
 }

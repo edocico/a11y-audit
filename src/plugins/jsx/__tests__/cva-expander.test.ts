@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest';
-import { extractCvaBase, parseCvaVariants, expandCvaToRegions } from '../cva-expander.js';
-import type { ClassRegion } from '../../../core/types.js';
+import { extractCvaBase, parseCvaVariants, expandCvaToRegions, expandCvaInPreExtracted } from '../cva-expander.js';
+import type { ClassRegion, FileRegions } from '../../../core/types.js';
 
 describe('extractCvaBase', () => {
   test('extracts first double-quoted string as base classes', () => {
@@ -194,5 +194,76 @@ describe('expandCvaToRegions', () => {
 
     expect(regions[0]!.effectiveOpacity).toBe(0.5);
     expect(regions[0]!.contextOverride).toEqual({ bg: '#ff0000' });
+  });
+});
+
+describe('expandCvaInPreExtracted', () => {
+  test('replaces cva() regions with expanded virtual regions', () => {
+    const files: FileRegions[] = [{
+      relPath: 'Button.tsx',
+      lines: ['const buttonVariants = cva('],
+      regions: [
+        {
+          content: '"bg-primary text-white", { variants: { size: { sm: "h-9", lg: "h-11" } }, defaultVariants: { size: "sm" } }',
+          startLine: 1,
+          contextBg: 'bg-background',
+        },
+        {
+          content: 'font-bold text-lg',
+          startLine: 10,
+          contextBg: 'bg-background',
+        },
+      ],
+    }];
+
+    const result = expandCvaInPreExtracted(
+      { files, readErrors: [], filesScanned: 1 },
+      false,
+    );
+
+    expect(result.files[0]!.regions.length).toBe(2);
+    expect(result.files[0]!.regions[0]!.content).toContain('bg-primary');
+    expect(result.files[0]!.regions[0]!.content).toContain('h-9');
+    expect(result.files[0]!.regions[1]!.content).toBe('font-bold text-lg');
+  });
+
+  test('leaves non-cva regions untouched', () => {
+    const files: FileRegions[] = [{
+      relPath: 'Card.tsx',
+      lines: [],
+      regions: [
+        { content: 'bg-card text-card-foreground p-6', startLine: 3, contextBg: 'bg-background' },
+      ],
+    }];
+
+    const result = expandCvaInPreExtracted(
+      { files, readErrors: [], filesScanned: 1 },
+      false,
+    );
+
+    expect(result.files[0]!.regions).toHaveLength(1);
+    expect(result.files[0]!.regions[0]!.content).toBe('bg-card text-card-foreground p-6');
+  });
+
+  test('checkAllVariants=true expands to multiple regions', () => {
+    const files: FileRegions[] = [{
+      relPath: 'Button.tsx',
+      lines: [],
+      regions: [
+        {
+          content: '"base", { variants: { v: { a: "class-a", b: "class-b" } }, defaultVariants: { v: "a" } }',
+          startLine: 1,
+          contextBg: 'bg-background',
+        },
+      ],
+    }];
+
+    const result = expandCvaInPreExtracted(
+      { files, readErrors: [], filesScanned: 1 },
+      true,
+    );
+
+    // default combo (base + class-a) + non-default variant (base + class-b) = 2
+    expect(result.files[0]!.regions.length).toBe(2);
   });
 });
