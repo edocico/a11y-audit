@@ -91,7 +91,7 @@ program
         } : undefined,
       };
 
-      const { totalViolations, baselineSummary, baselineUpdated } = runAudit(pipelineOpts);
+      const { totalViolations, baselineSummary, baselineUpdated, results } = runAudit(pipelineOpts);
 
       if (baselineUpdated) {
         console.log(`[a11y-audit] Baseline updated: ${totalViolations} violations baselined.`);
@@ -118,6 +118,17 @@ program
       } else {
         if (totalViolations > 0) {
           console.log(`[a11y-audit] ${totalViolations} total violations found.`);
+          if (suggestEnabled) {
+            const totalWithSuggestions = results.reduce(
+              (s, { result }) => s + result.violations.filter(
+                v => v.suggestions && v.suggestions.length > 0
+              ).length,
+              0,
+            );
+            if (totalWithSuggestions > 0) {
+              console.log(`[a11y-audit] ${totalWithSuggestions} violations have auto-fix suggestions. See report.`);
+            }
+          }
           process.exit(1);
         }
         console.log('[a11y-audit] All checks passed!');
