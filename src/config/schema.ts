@@ -55,6 +55,14 @@ export const auditConfigSchema = z.object({
     /** Maximum suggestions per violation */
     maxSuggestions: z.number().min(1).max(10).default(3),
   }).optional(),
+
+  /** CVA variant expansion for static analysis */
+  cva: z.object({
+    /** Enable CVA variant extraction */
+    enabled: z.boolean().default(false),
+    /** Check all individual variants (not just default combination) */
+    checkAllVariants: z.boolean().default(false),
+  }).optional(),
 });
 
 export type AuditConfigInput = z.input<typeof auditConfigSchema>;

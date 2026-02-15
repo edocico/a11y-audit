@@ -27,6 +27,8 @@ program
   .option('--fail-on-improvement', 'Fail CI if fewer violations than baseline (forces baseline update)')
   .option('--suggest', 'Generate auto-fix suggestions for contrast violations')
   .option('--max-suggestions <n>', 'Maximum suggestions per violation (default: 3)')
+  .option('--cva', 'Enable CVA variant expansion for static analysis')
+  .option('--check-all-variants', 'Check all CVA variant combinations (not just defaults)')
   .action(async (opts) => {
     try {
       // 1. Load config file (if any), then merge CLI flags as overrides
@@ -55,6 +57,11 @@ program
         opts.maxSuggestions != null
           ? parseInt(opts.maxSuggestions as string, 10)
           : (fileConfig.suggestions?.maxSuggestions ?? 3);
+
+      const cvaEnabled: boolean =
+        opts.cva === true || (fileConfig.cva?.enabled ?? false);
+      const checkAllVariants: boolean =
+        opts.checkAllVariants === true || (fileConfig.cva?.checkAllVariants ?? false);
 
       // 2. Resolve CSS file paths relative to cwd
       const resolvedCss = css.map((p: string) => resolve(cwd, p));
@@ -88,6 +95,10 @@ program
         suggestions: suggestEnabled ? {
           enabled: true,
           maxSuggestions,
+        } : undefined,
+        cva: cvaEnabled ? {
+          enabled: true,
+          checkAllVariants,
         } : undefined,
       };
 

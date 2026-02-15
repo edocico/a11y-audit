@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, test, expect } from 'vitest';
 import { auditConfigSchema } from '../schema.js';
 
 describe('auditConfigSchema', () => {
@@ -71,6 +71,33 @@ describe('auditConfigSchema', () => {
   it('should default portals to empty object', () => {
     const result = auditConfigSchema.parse({});
     expect(result.portals).toEqual({});
+  });
+
+  describe('cva config', () => {
+    test('defaults to disabled with checkAllVariants=false', () => {
+      const result = auditConfigSchema.parse({
+        cva: {},
+      });
+      expect(result.cva).toEqual({
+        enabled: false,
+        checkAllVariants: false,
+      });
+    });
+
+    test('accepts enabled with checkAllVariants', () => {
+      const result = auditConfigSchema.parse({
+        cva: { enabled: true, checkAllVariants: true },
+      });
+      expect(result.cva).toEqual({
+        enabled: true,
+        checkAllVariants: true,
+      });
+    });
+
+    test('cva field is optional', () => {
+      const result = auditConfigSchema.parse({});
+      expect(result.cva).toBeUndefined();
+    });
   });
 
   describe('suggestions config', () => {
