@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { CvaVariantGroup, CvaVariantOption } from '../../core/types.js';
+import type { ClassRegion, CvaVariantGroup, CvaVariantOption } from '../../core/types.js';
 
 interface ParsedCvaConfig {
   variants: CvaVariantGroup[];
@@ -129,4 +129,55 @@ export function parseCvaVariants(content: string): ParsedCvaConfig {
   }
 
   return { variants, defaultVariants };
+}
+
+/**
+ * Expands a raw cva() ClassRegion into virtual ClassRegions.
+ *
+ * - Default mode (checkAllVariants=false): ONE region with base + defaultVariants
+ * - All-variants mode (checkAllVariants=true): default combo + ONE per
+ *   non-default individual variant option (base + that variant's classes)
+ */
+export function expandCvaToRegions(
+  region: ClassRegion,
+  checkAllVariants: boolean,
+): ClassRegion[] {
+  const base = extractCvaBase(region.content);
+  const { variants, defaultVariants } = parseCvaVariants(region.content);
+
+  // Build default combination: base + classes from each defaultVariant
+  const defaultClasses = [base];
+  for (const group of variants) {
+    const defaultOptionName = defaultVariants.get(group.axis);
+    if (defaultOptionName) {
+      const option = group.options.find(o => o.name === defaultOptionName);
+      if (option) defaultClasses.push(option.classes);
+    }
+  }
+
+  const makeRegion = (classes: string): ClassRegion => ({
+    content: classes,
+    startLine: region.startLine,
+    contextBg: region.contextBg,
+    inlineStyles: region.inlineStyles,
+    contextOverride: region.contextOverride,
+    effectiveOpacity: region.effectiveOpacity,
+  });
+
+  const results: ClassRegion[] = [];
+
+  // Always include the default combination
+  results.push(makeRegion(defaultClasses.join(' ')));
+
+  if (checkAllVariants) {
+    for (const group of variants) {
+      const defaultOptionName = defaultVariants.get(group.axis);
+      for (const option of group.options) {
+        if (option.name === defaultOptionName) continue;
+        results.push(makeRegion(`${base} ${option.classes}`));
+      }
+    }
+  }
+
+  return results;
 }
