@@ -1,6 +1,44 @@
 import { describe, test, expect } from 'vitest';
-import { extractShadeFamilies, parseFamilyAndShade } from '../suggestions.js';
-import type { RawPalette } from '../types.js';
+import {
+  extractShadeFamilies,
+  parseFamilyAndShade,
+  generateSuggestions,
+} from '../suggestions.js';
+import type { ContrastResult, RawPalette } from '../types.js';
+
+function makeViolation(overrides: Partial<ContrastResult>): ContrastResult {
+  return {
+    file: 'test.tsx',
+    line: 1,
+    bgClass: 'bg-white',
+    textClass: 'text-gray-400',
+    bgHex: '#ffffff',
+    textHex: '#9ca3af',
+    ratio: 2.97,
+    passAA: false,
+    passAALarge: false,
+    passAAA: false,
+    passAAALarge: false,
+    ...overrides,
+  };
+}
+
+// Real Tailwind v4 gray shades (approximate)
+function makeGrayPalette(): RawPalette {
+  return new Map([
+    ['--color-gray-50', '#f9fafb'],
+    ['--color-gray-100', '#f3f4f6'],
+    ['--color-gray-200', '#e5e7eb'],
+    ['--color-gray-300', '#d1d5db'],
+    ['--color-gray-400', '#9ca3af'],
+    ['--color-gray-500', '#6b7280'],
+    ['--color-gray-600', '#4b5563'],
+    ['--color-gray-700', '#374151'],
+    ['--color-gray-800', '#1f2937'],
+    ['--color-gray-900', '#111827'],
+    ['--color-gray-950', '#030712'],
+  ]);
+}
 
 describe('extractShadeFamilies', () => {
   function makePalette(entries: [string, string][]): RawPalette {
@@ -97,5 +135,125 @@ describe('parseFamilyAndShade', () => {
   test('handles implicit bg prefix from context', () => {
     expect(parseFamilyAndShade('(implicit) bg-card')).toBeNull();
     expect(parseFamilyAndShade('(@a11y-context) #ffffff')).toBeNull();
+  });
+});
+
+describe('generateSuggestions', () => {
+  const palette = makeGrayPalette();
+  const families = extractShadeFamilies(palette);
+
+  test('suggests darker shades for text on light background', () => {
+    const violation = makeViolation({
+      bgHex: '#ffffff',
+      textClass: 'text-gray-400',
+      textHex: '#9ca3af',
+    });
+
+    const suggestions = generateSuggestions(violation, families, 'AA', 'light');
+
+    expect(suggestions.length).toBeGreaterThan(0);
+    // First suggestion should be closest passing shade
+    expect(suggestions[0]!.suggestedClass).toMatch(/^text-gray-\d+$/);
+    expect(suggestions[0]!.newRatio).toBeGreaterThanOrEqual(4.5);
+    // Ordered by shade distance (closest first)
+    for (let i = 1; i < suggestions.length; i++) {
+      expect(suggestions[i]!.shadeDistance).toBeGreaterThanOrEqual(suggestions[i - 1]!.shadeDistance);
+    }
+  });
+
+  test('suggests lighter shades for text on dark background', () => {
+    const violation = makeViolation({
+      bgClass: 'bg-gray-900',
+      bgHex: '#111827',
+      textClass: 'text-gray-600',
+      textHex: '#4b5563',
+    });
+
+    const suggestions = generateSuggestions(violation, families, 'AA', 'light');
+
+    expect(suggestions.length).toBeGreaterThan(0);
+    expect(suggestions[0]!.suggestedClass).toMatch(/^text-gray-\d+$/);
+    expect(suggestions[0]!.newRatio).toBeGreaterThanOrEqual(4.5);
+    // Should suggest lighter shades (lower numbers)
+    const suggestedShade = parseInt(suggestions[0]!.suggestedClass.match(/(\d+)$/)![1]!, 10);
+    expect(suggestedShade).toBeLessThan(600);
+  });
+
+  test('returns empty array for semantic colors (no shade family)', () => {
+    const violation = makeViolation({
+      textClass: 'text-primary',
+      textHex: '#0369a1',
+    });
+
+    const suggestions = generateSuggestions(violation, families, 'AA', 'light');
+    expect(suggestions).toEqual([]);
+  });
+
+  test('returns empty array for arbitrary/custom colors', () => {
+    const violation = makeViolation({
+      textClass: 'text-[#7a7a7a]',
+      textHex: '#7a7a7a',
+    });
+
+    const suggestions = generateSuggestions(violation, families, 'AA', 'light');
+    expect(suggestions).toEqual([]);
+  });
+
+  test('respects AAA threshold when requested', () => {
+    const violation = makeViolation({
+      bgHex: '#ffffff',
+      textClass: 'text-gray-500',
+      textHex: '#6b7280',
+    });
+
+    const suggestions = generateSuggestions(violation, families, 'AAA', 'light');
+
+    if (suggestions.length > 0) {
+      expect(suggestions[0]!.newRatio).toBeGreaterThanOrEqual(7.0);
+    }
+  });
+
+  test('handles bg with alpha (composites against page bg)', () => {
+    const violation = makeViolation({
+      bgHex: '#1f2937',
+      bgAlpha: 0.8,
+      textClass: 'text-gray-500',
+      textHex: '#6b7280',
+    });
+
+    const suggestionsLight = generateSuggestions(violation, families, 'AA', 'light');
+    const suggestionsDark = generateSuggestions(violation, families, 'AA', 'dark');
+
+    // Different page bg can produce different effective bg and thus different suggestions
+    expect(Array.isArray(suggestionsLight)).toBe(true);
+    expect(Array.isArray(suggestionsDark)).toBe(true);
+  });
+
+  test('caps suggestions at maxSuggestions', () => {
+    const violation = makeViolation({
+      bgHex: '#ffffff',
+      textClass: 'text-gray-300',
+      textHex: '#d1d5db',
+    });
+
+    const suggestions = generateSuggestions(violation, families, 'AA', 'light', 2);
+    expect(suggestions.length).toBeLessThanOrEqual(2);
+  });
+
+  test('handles non-text pair types (border uses 3:1)', () => {
+    const violation = makeViolation({
+      bgHex: '#ffffff',
+      textClass: 'border-gray-200',
+      textHex: '#e5e7eb',
+      pairType: 'border',
+    });
+
+    const suggestions = generateSuggestions(violation, families, 'AA', 'light');
+
+    if (suggestions.length > 0) {
+      expect(suggestions[0]!.suggestedClass).toMatch(/^border-gray-\d+$/);
+      // Non-text uses 3:1 threshold
+      expect(suggestions[0]!.newRatio).toBeGreaterThanOrEqual(3.0);
+    }
   });
 });

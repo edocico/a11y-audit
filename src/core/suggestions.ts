@@ -1,4 +1,16 @@
-import type { RawPalette, ShadeFamily } from './types.js';
+import { colord, extend } from 'colord';
+import a11yPlugin from 'colord/plugins/a11y';
+import type {
+  ColorSuggestion,
+  ConformanceLevel,
+  ContrastResult,
+  RawPalette,
+  ShadeFamily,
+  ThemeMode,
+} from './types.js';
+import { compositeOver } from './contrast-checker.js';
+
+extend([a11yPlugin]);
 
 export interface ParsedClass {
   prefix: string;   // "text-", "bg-", "border-", "ring-", "outline-"
@@ -57,4 +69,81 @@ export function extractShadeFamilies(palette: RawPalette): Map<string, ShadeFami
   }
 
   return families;
+}
+
+const PAGE_BG_LIGHT = '#ffffff';
+const PAGE_BG_DARK = '#09090b';
+
+const DEFAULT_MAX_SUGGESTIONS = 3;
+
+/**
+ * Generates shade-family suggestions for a contrast violation.
+ *
+ * Algorithm (luminosity-directed walk):
+ * 1. Parse the violating fg class to find its shade family
+ * 2. Compute effective bg (with alpha compositing)
+ * 3. Determine search direction based on bg luminance
+ * 4. Walk shade family, filtering candidates by luminosity direction + threshold
+ * 5. Return closest passing shades (sorted by distance from original)
+ */
+export function generateSuggestions(
+  violation: ContrastResult,
+  families: Map<string, ShadeFamily>,
+  threshold: ConformanceLevel,
+  themeMode: ThemeMode,
+  maxSuggestions: number = DEFAULT_MAX_SUGGESTIONS,
+): ColorSuggestion[] {
+  // 1. Parse the foreground class
+  const parsed = parseFamilyAndShade(violation.textClass);
+  if (!parsed) return [];
+
+  const family = families.get(parsed.family);
+  if (!family) return [];
+
+  // 2. Compute effective background (same logic as contrast-checker)
+  if (!violation.bgHex) return [];
+  const pageBg = themeMode === 'light' ? PAGE_BG_LIGHT : PAGE_BG_DARK;
+  const effectiveBg = violation.bgAlpha !== undefined
+    ? compositeOver(violation.bgHex, pageBg, violation.bgAlpha)
+    : violation.bgHex;
+
+  // 3. Determine required threshold ratio
+  const isNonText = violation.pairType !== undefined && violation.pairType !== 'text';
+  let requiredRatio: number;
+  if (threshold === 'AAA') {
+    requiredRatio = (isNonText || violation.isLargeText) ? 4.5 : 7.0;
+  } else {
+    requiredRatio = (isNonText || violation.isLargeText) ? 3.0 : 4.5;
+  }
+
+  // 4. Compute bg luminance for direction hint
+  const bgLuminance = colord(effectiveBg).luminance();
+  const bgColor = colord(effectiveBg);
+
+  // 5. Walk all shades, collect passing candidates
+  const candidates: ColorSuggestion[] = [];
+
+  for (const [shade, hex] of family.shades) {
+    if (shade === parsed.shade) continue; // skip current shade
+
+    // Verify luminosity direction: on light bg, want darker fg (lower luminance)
+    const candidateLuminance = colord(hex).luminance();
+    if (bgLuminance > 0.5 && candidateLuminance >= bgLuminance) continue;
+    if (bgLuminance <= 0.5 && candidateLuminance <= bgLuminance) continue;
+
+    const ratio = Math.round(bgColor.contrast(colord(hex)) * 100) / 100;
+    if (ratio < requiredRatio) continue;
+
+    candidates.push({
+      suggestedClass: `${parsed.prefix}${parsed.family}-${shade}`,
+      suggestedHex: hex,
+      newRatio: ratio,
+      shadeDistance: Math.abs(shade - parsed.shade),
+    });
+  }
+
+  // 6. Sort by shade distance (closest first), then by ratio (lower = minimal visual change)
+  candidates.sort((a, b) => a.shadeDistance - b.shadeDistance || a.newRatio - b.newRatio);
+
+  return candidates.slice(0, maxSuggestions);
 }
