@@ -12,6 +12,8 @@ import { generateJsonReport } from './report/json.js';
 import { isNativeAvailable, getNativeModule } from '../native/index.js';
 import { convertNativeResult } from '../native/converter.js';
 import { loadBaseline, saveBaseline, reconcileViolations } from './baseline.js';
+import { extractShadeFamilies, generateSuggestions } from './suggestions.js';
+import { extractTailwindPalette } from '../plugins/tailwind/palette.js';
 import type { BaselineSummary } from './types.js';
 
 const MAX_REPORT_COUNTER = 100;
@@ -68,6 +70,12 @@ export interface PipelineOptions {
     path: string;
     updateBaseline: boolean;
     failOnImprovement: boolean;
+  };
+
+  /** Suggestion engine configuration */
+  suggestions?: {
+    enabled: boolean;
+    maxSuggestions: number;
   };
 }
 
@@ -164,6 +172,27 @@ export function runAudit(options: PipelineOptions): AuditRunResult {
     log(verbose, `  ${result.violations.length} violations, ${result.passed.length} passed`);
 
     results.push({ mode, result });
+  }
+
+  // Phase 3a: Enrich violations with suggestions (optional)
+  if (options.suggestions?.enabled) {
+    log(verbose, '[a11y-audit] Generating suggestions...');
+    const rawPalette = extractTailwindPalette(palettePath);
+    const shadeFamilies = extractShadeFamilies(rawPalette);
+    const maxSuggestions = options.suggestions.maxSuggestions;
+
+    for (const { mode, result } of results) {
+      for (const violation of result.violations) {
+        violation.suggestions = generateSuggestions(
+          violation, shadeFamilies, threshold, mode, maxSuggestions,
+        );
+      }
+    }
+
+    const totalSuggested = results.reduce(
+      (s, r) => s + r.result.violations.filter(v => v.suggestions && v.suggestions.length > 0).length, 0,
+    );
+    log(verbose, `  ${totalSuggested} violations with suggestions`);
   }
 
   // Phase 3.5: Baseline — save or reconcile
