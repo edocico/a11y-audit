@@ -14,6 +14,7 @@ import { convertNativeResult } from '../native/converter.js';
 import { loadBaseline, saveBaseline, reconcileViolations } from './baseline.js';
 import { extractShadeFamilies, generateSuggestions } from './suggestions.js';
 import { extractTailwindPalette } from '../plugins/tailwind/palette.js';
+import { expandCvaInPreExtracted } from '../plugins/jsx/cva-expander.js';
 import type { BaselineSummary } from './types.js';
 
 const MAX_REPORT_COUNTER = 100;
@@ -76,6 +77,12 @@ export interface PipelineOptions {
   suggestions?: {
     enabled: boolean;
     maxSuggestions: number;
+  };
+
+  /** CVA variant expansion configuration */
+  cva?: {
+    enabled: boolean;
+    checkAllVariants: boolean;
   };
 }
 
@@ -152,6 +159,15 @@ export function runAudit(options: PipelineOptions): AuditRunResult {
     );
   }
   log(verbose, `  ${preExtracted.filesScanned} files scanned`);
+
+  // Phase 1a: CVA variant expansion (optional, post-extraction)
+  if (options.cva?.enabled) {
+    log(verbose, '[a11y-audit] Expanding CVA variant definitions...');
+    const regionsBefore = preExtracted.files.reduce((s, f) => s + f.regions.length, 0);
+    preExtracted = expandCvaInPreExtracted(preExtracted, options.cva.checkAllVariants);
+    const regionsAfter = preExtracted.files.reduce((s, f) => s + f.regions.length, 0);
+    log(verbose, `  ${regionsAfter - regionsBefore} virtual regions added from CVA expansion`);
+  }
 
   // Phase 2+3: Resolve per theme + check contrast
   const themes: { mode: ThemeMode; map: typeof light }[] = [
