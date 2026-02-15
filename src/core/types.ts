@@ -161,3 +161,29 @@ export interface ColorSuggestion {
   /** How many shade steps from the original (e.g., 500->600 = 1) */
   shadeDistance: number;
 }
+
+/** A parsed variant option within a CVA definition */
+export interface CvaVariantOption {
+  /** Option name (e.g., "destructive", "sm") */
+  name: string;
+  /** Tailwind classes for this option */
+  classes: string;
+}
+
+/** A parsed variant group within a CVA definition */
+export interface CvaVariantGroup {
+  /** Variant axis name (e.g., "variant", "size") */
+  axis: string;
+  /** Available options */
+  options: CvaVariantOption[];
+}
+
+/** A parsed cva() definition extracted from source code */
+export interface CvaDefinition {
+  /** Base classes (always applied) */
+  baseClasses: string;
+  /** Variant groups */
+  variants: CvaVariantGroup[];
+  /** Default variant selections (axis -> option name) */
+  defaultVariants: Map<string, string>;
+}
