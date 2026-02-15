@@ -257,3 +257,44 @@ describe('generateSuggestions', () => {
     }
   });
 });
+
+describe('suggestion engine integration', () => {
+  test('produces correct results for real gray palette', () => {
+    const palette: RawPalette = new Map([
+      ['--color-gray-50', '#f9fafb'],
+      ['--color-gray-100', '#f3f4f6'],
+      ['--color-gray-200', '#e5e7eb'],
+      ['--color-gray-300', '#d1d5db'],
+      ['--color-gray-400', '#9ca3af'],
+      ['--color-gray-500', '#6b7280'],
+      ['--color-gray-600', '#4b5563'],
+      ['--color-gray-700', '#374151'],
+      ['--color-gray-800', '#1f2937'],
+      ['--color-gray-900', '#111827'],
+      ['--color-gray-950', '#030712'],
+    ]);
+
+    const families = extractShadeFamilies(palette);
+    const violation: ContrastResult = {
+      file: 'Button.tsx',
+      line: 10,
+      bgClass: 'bg-white',
+      textClass: 'text-gray-400',
+      bgHex: '#ffffff',
+      textHex: '#9ca3af',
+      ratio: 2.97,
+      passAA: false,
+      passAALarge: false,
+      passAAA: false,
+      passAAALarge: false,
+    };
+
+    const suggestions = generateSuggestions(violation, families, 'AA', 'light');
+
+    expect(suggestions.length).toBeGreaterThan(0);
+    expect(suggestions[0]!.newRatio).toBeGreaterThanOrEqual(4.5);
+    expect(suggestions[0]!.shadeDistance).toBeLessThanOrEqual(
+      suggestions[suggestions.length - 1]!.shadeDistance,
+    );
+  });
+});
