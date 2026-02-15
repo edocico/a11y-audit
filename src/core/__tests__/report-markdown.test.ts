@@ -82,3 +82,60 @@ describe('generateReport with baseline', () => {
     expect(report).not.toContain('Baseline Violations');
   });
 });
+
+describe('generateReport with suggestions', () => {
+  test('renders suggestion line below text violations', () => {
+    const violation = makeViolation({
+      textClass: 'text-gray-400',
+      textHex: '#9ca3af',
+      ratio: 2.97,
+      suggestions: [
+        { suggestedClass: 'text-gray-600', suggestedHex: '#4b5563', newRatio: 5.91, shadeDistance: 2 },
+        { suggestedClass: 'text-gray-700', suggestedHex: '#374151', newRatio: 8.59, shadeDistance: 3 },
+      ],
+    });
+
+    const results = [{ mode: 'light' as ThemeMode, result: makeResult([violation]) }];
+    const report = generateReport(results);
+
+    expect(report).toContain('text-gray-600');
+    expect(report).toContain('5.91:1');
+    expect(report).toContain('text-gray-700');
+    expect(report).toContain('Suggestion');
+  });
+
+  test('does not render suggestion line when no suggestions', () => {
+    const violation = makeViolation({ suggestions: [] });
+    const results = [{ mode: 'light' as ThemeMode, result: makeResult([violation]) }];
+    const report = generateReport(results);
+
+    expect(report).not.toContain('Suggestion');
+  });
+
+  test('renders suggestion line below non-text violations', () => {
+    const violation = makeViolation({
+      pairType: 'border',
+      textClass: 'border-gray-200',
+      textHex: '#e5e7eb',
+      ratio: 1.12,
+      suggestions: [
+        { suggestedClass: 'border-gray-400', suggestedHex: '#9ca3af', newRatio: 3.01, shadeDistance: 2 },
+      ],
+    });
+
+    const results = [{ mode: 'light' as ThemeMode, result: makeResult([violation]) }];
+    const report = generateReport(results);
+
+    expect(report).toContain('border-gray-400');
+    expect(report).toContain('3.01:1');
+    expect(report).toContain('Suggestion');
+  });
+
+  test('does not render suggestion line when suggestions undefined', () => {
+    const violation = makeViolation();
+    const results = [{ mode: 'light' as ThemeMode, result: makeResult([violation]) }];
+    const report = generateReport(results);
+
+    expect(report).not.toContain('Suggestion');
+  });
+});

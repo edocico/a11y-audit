@@ -30,6 +30,13 @@ function renderTextViolationTable(
       lines.push(
         `| ${v.line} | ${stateLabel} | ${bgLabel} | ${fgLabel} | ${sizeLabel} | ${v.ratio}:1 | ${aaIcon} | ${aaaIcon} | ${aaLargeIcon} | ${apcaLabel} |`
       );
+      // Suggestion row
+      if (v.suggestions && v.suggestions.length > 0) {
+        const hints = v.suggestions
+          .map(s => `\`${s.suggestedClass}\` (${s.newRatio}:1)`)
+          .join(' or ');
+        lines.push(`| | | | **Suggestion:** use ${hints} | | | | | | |`);
+      }
     }
     lines.push('');
   }
@@ -57,6 +64,13 @@ function renderNonTextViolationTable(
       lines.push(
         `| ${v.line} | ${stateLabel} | ${typeLabel} | ${elementLabel} | ${againstLabel} | ${v.ratio}:1 | ${passIcon} |`
       );
+      // Suggestion row
+      if (v.suggestions && v.suggestions.length > 0) {
+        const hints = v.suggestions
+          .map(s => `\`${s.suggestedClass}\` (${s.newRatio}:1)`)
+          .join(' or ');
+        lines.push(`| | | | **Suggestion:** use ${hints} | | | |`);
+      }
     }
     lines.push('');
   }
