@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { extractShadeFamilies } from '../suggestions.js';
+import { extractShadeFamilies, parseFamilyAndShade } from '../suggestions.js';
 import type { RawPalette } from '../types.js';
 
 describe('extractShadeFamilies', () => {
@@ -51,5 +51,51 @@ describe('extractShadeFamilies', () => {
   test('returns empty map for empty palette', () => {
     const families = extractShadeFamilies(new Map());
     expect(families.size).toBe(0);
+  });
+});
+
+describe('parseFamilyAndShade', () => {
+  test('parses standard text-family-shade classes', () => {
+    expect(parseFamilyAndShade('text-gray-500')).toEqual({ prefix: 'text-', family: 'gray', shade: 500 });
+    expect(parseFamilyAndShade('text-red-600')).toEqual({ prefix: 'text-', family: 'red', shade: 600 });
+    expect(parseFamilyAndShade('text-sky-700')).toEqual({ prefix: 'text-', family: 'sky', shade: 700 });
+  });
+
+  test('parses bg-family-shade classes', () => {
+    expect(parseFamilyAndShade('bg-slate-900')).toEqual({ prefix: 'bg-', family: 'slate', shade: 900 });
+    expect(parseFamilyAndShade('bg-red-50')).toEqual({ prefix: 'bg-', family: 'red', shade: 50 });
+  });
+
+  test('parses non-text prefixes (border, ring, outline)', () => {
+    expect(parseFamilyAndShade('border-gray-300')).toEqual({ prefix: 'border-', family: 'gray', shade: 300 });
+    expect(parseFamilyAndShade('ring-blue-500')).toEqual({ prefix: 'ring-', family: 'blue', shade: 500 });
+    expect(parseFamilyAndShade('outline-red-400')).toEqual({ prefix: 'outline-', family: 'red', shade: 400 });
+  });
+
+  test('returns null for semantic colors (no numeric shade)', () => {
+    expect(parseFamilyAndShade('text-primary')).toBeNull();
+    expect(parseFamilyAndShade('bg-background')).toBeNull();
+    expect(parseFamilyAndShade('text-primary-foreground')).toBeNull();
+    expect(parseFamilyAndShade('bg-card')).toBeNull();
+  });
+
+  test('returns null for arbitrary/custom colors', () => {
+    expect(parseFamilyAndShade('text-[#7a7a7a]')).toBeNull();
+    expect(parseFamilyAndShade('bg-[oklch(0.5_0.2_180)]')).toBeNull();
+  });
+
+  test('returns null for non-color utilities', () => {
+    expect(parseFamilyAndShade('text-2xl')).toBeNull();
+    expect(parseFamilyAndShade('bg-gradient-to-r')).toBeNull();
+  });
+
+  test('strips alpha modifier before parsing', () => {
+    expect(parseFamilyAndShade('text-gray-500/70')).toEqual({ prefix: 'text-', family: 'gray', shade: 500 });
+    expect(parseFamilyAndShade('bg-red-500/[0.3]')).toEqual({ prefix: 'bg-', family: 'red', shade: 500 });
+  });
+
+  test('handles implicit bg prefix from context', () => {
+    expect(parseFamilyAndShade('(implicit) bg-card')).toBeNull();
+    expect(parseFamilyAndShade('(@a11y-context) #ffffff')).toBeNull();
   });
 });
