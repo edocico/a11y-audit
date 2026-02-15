@@ -68,3 +68,36 @@ describe('generateJsonReport with baseline', () => {
     expect(json.themes[0].violations[0].isBaseline).toBe(true);
   });
 });
+
+describe('generateJsonReport with suggestions', () => {
+  test('includes suggestions in violation output when present', () => {
+    const violation = makeViolation({
+      suggestions: [
+        {
+          suggestedClass: 'text-gray-600',
+          suggestedHex: '#4b5563',
+          newRatio: 5.91,
+          shadeDistance: 1,
+        },
+      ],
+    });
+
+    const results = [{ mode: 'light' as ThemeMode, result: makeResult([violation]) }];
+    const json = JSON.parse(generateJsonReport(results));
+
+    expect(json.themes[0].violations[0].suggestions).toBeDefined();
+    expect(json.themes[0].violations[0].suggestions).toHaveLength(1);
+    expect(json.themes[0].violations[0].suggestions[0].suggestedClass).toBe('text-gray-600');
+    expect(json.themes[0].violations[0].suggestions[0].suggestedHex).toBe('#4b5563');
+    expect(json.themes[0].violations[0].suggestions[0].newRatio).toBe(5.91);
+    expect(json.themes[0].violations[0].suggestions[0].shadeDistance).toBe(1);
+  });
+
+  test('omits suggestions field when not present', () => {
+    const violation = makeViolation({});
+    const results = [{ mode: 'light' as ThemeMode, result: makeResult([violation]) }];
+    const json = JSON.parse(generateJsonReport(results));
+
+    expect(json.themes[0].violations[0].suggestions).toBeUndefined();
+  });
+});
